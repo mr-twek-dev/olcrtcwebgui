@@ -1,10 +1,168 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OLC RTC — сервер</title><link rel="stylesheet" href="/style.css"></head><body>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OLC RTC - сервер</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
 <main>
-  <section id="login" class="login-card"><div class="brand"><span class="logo">O</span><div><b>OLC RTC</b><small>CONTROL PANEL</small></div></div><h1>С возвращением</h1><p class="muted">Войдите, чтобы управлять вашим сервером</p><form id="loginForm"><label>Логин<input id="username" autocomplete="username" required></label><label>Пароль<input id="password" type="password" autocomplete="current-password" required></label><button>Войти в панель <span>→</span></button><p id="loginError" class="error"></p></form></section>
-  <section id="panel" hidden><aside><div class="brand"><span class="logo">O</span><div><b>OLC RTC</b><small>CONTROL PANEL</small></div></div><nav><button class="active">⌂ <span>Обзор</span></button><button data-scroll="settingsCard">⚙ <span>Конфигурация</span></button><button data-scroll="updateCard">↻ <span>Обновления</span></button></nav><div class="aside-bottom"><span class="avatar">A</span><div><b id="currentUser">admin</b><small>Администратор</small></div><button id="logout" title="Выйти">↪</button></div></aside>
-  <div class="content"><header><div><p class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</p><h1>Ваш сервер <em>под контролем</em></h1><p class="muted">Настройка, мониторинг и обновление OLC RTC в одном месте.</p></div><span id="topStatus" class="pill">● проверка...</span></header><div id="notice"></div>
-  <div class="grid"><article class="status-card"><div class="card-head"><div><p class="eyebrow">СОСТОЯНИЕ СЕРВЕРА</p><h2 id="statusText">Проверяем...</h2></div><span class="pulse">●</span></div><dl><div><dt>Версия</dt><dd id="version">—</dd></div><div><dt>Каталог</dt><dd id="projectDir">—</dd></div></dl><div class="actions"><button data-action="start">Запустить</button><button class="secondary" data-action="restart">Перезапустить</button><button class="danger" data-action="stop">Остановить</button></div></article>
-  <article id="updateCard"><p class="eyebrow">ОБНОВЛЕНИЯ</p><h2>Всегда актуальная версия</h2><p class="muted">Проверьте GitHub и установите свежую версию OLC RTC.</p><div class="version-row"><span>Текущая <b id="currentVersion">—</b></span><span>Последняя <b id="latestVersion">—</b></span></div><div class="actions"><button id="checkUpdate" class="secondary">Проверить</button><button id="installUpdate" disabled>Обновить</button></div></article></div>
-  <article id="settingsCard"><div class="card-head"><div><p class="eyebrow">КОНФИГУРАЦИЯ</p><h2>Параметры OLC RTC</h2></div><span class="step">01 — СОЕДИНЕНИЕ</span></div><form id="settingsForm" class="settings"><label>Провайдер<select id="provider"><option value="jitsi">Jitsi</option><option value="telemost">Яндекс Телемост</option><option value="wbstream">WB Stream</option><option value="none">Без провайдера</option></select><small>Сигнальный провайдер OLC RTC</small></label><label>Транспорт<select id="transport"><option value="datachannel">Data channel</option><option value="vp8channel">VP8 channel</option><option value="seichannel">SEI channel</option><option value="videochannel">Video channel</option></select><small>Канал передачи данных WebRTC</small></label><label>Адрес провайдера<input id="providerAddress" placeholder="Необязательно"><small>Переопределение адреса провайдера</small></label><label>Комната<input id="room" placeholder="Необязательно"><small>Имя или идентификатор комнаты</small></label><label>Адрес прослушивания<input id="listenAddress"><small>Локальный адрес сервера</small></label><label>Порт<input id="listenPort" type="number" min="1" max="65535"><small>Локальный порт сервера</small></label><label>Назначение<input id="destination" placeholder="host:port"><small>Удалённый адрес назначения</small></label><label class="toggle"><input id="autoStart" type="checkbox"><span></span>Запускать автоматически</label><div class="save"><button>Сохранить конфигурацию</button></div></form></article>
-  <footer>OLC RTC WEBGUI <span>•</span> OPEN LIBRE COMMUNITY</footer></div></section>
-</main><script src="/app.js"></script></body></html>
+  <section id="login" class="login-card">
+    <div class="brand"><span class="logo">O</span><div><b>OLC RTC</b><small>CONTROL PANEL</small></div></div>
+    <h1>С возвращением</h1>
+    <p class="muted">Войдите, чтобы управлять вашим сервером</p>
+    <form id="loginForm">
+      <label>Логин<input id="username" autocomplete="username" required></label>
+      <label>Пароль<input id="password" type="password" autocomplete="current-password" required></label>
+      <button>Войти в панель <span>→</span></button>
+      <p id="loginError" class="error"></p>
+    </form>
+  </section>
+
+  <section id="panel" hidden>
+    <aside>
+      <div class="brand"><span class="logo">O</span><div><b>OLC RTC</b><small>CONTROL PANEL</small></div></div>
+      <nav>
+        <button class="active">⌂ <span>Обзор</span></button>
+        <button data-scroll="settingsCard">⚙ <span>Конфигурация</span></button>
+        <button data-scroll="updateCard">↻ <span>Обновления</span></button>
+      </nav>
+      <div class="aside-bottom"><span class="avatar">A</span><div><b id="currentUser">admin</b><small>Администратор</small></div><button id="logout" title="Выйти">↪</button></div>
+    </aside>
+
+    <div class="content">
+      <header>
+        <div><p class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</p><h1>Ваш сервер <em>под контролем</em></h1><p class="muted">Настройка, мониторинг и обновление OLC RTC в одном месте.</p></div>
+        <span id="topStatus" class="pill">● проверка...</span>
+      </header>
+      <div id="notice"></div>
+
+      <div class="grid">
+        <article class="status-card">
+          <div class="card-head"><div><p class="eyebrow">СОСТОЯНИЕ СЕРВЕРА</p><h2 id="statusText">Проверяем...</h2></div><span class="pulse">●</span></div>
+          <dl>
+            <div><dt>Версия</dt><dd id="version">-</dd></div>
+            <div><dt>Каталог</dt><dd id="projectDir">-</dd></div>
+            <div class="wide"><dt>Конфигурация</dt><dd id="configPath">-</dd></div>
+          </dl>
+          <div class="actions"><button data-action="start">Запустить</button><button class="secondary" data-action="restart">Перезапустить</button><button class="danger" data-action="stop">Остановить</button></div>
+        </article>
+        <article id="updateCard">
+          <p class="eyebrow">ОБНОВЛЕНИЯ</p><h2>Всегда актуальная версия</h2><p class="muted">Проверьте GitHub и установите свежую версию OLC RTC.</p>
+          <div class="version-row"><span>Текущая <b id="currentVersion">-</b></span><span>Последняя <b id="latestVersion">-</b></span></div>
+          <div class="actions"><button id="checkUpdate" class="secondary">Проверить</button><button id="installUpdate" disabled>Обновить</button></div>
+        </article>
+      </div>
+
+      <article id="settingsCard">
+        <div class="card-head"><div><p class="eyebrow">КОНФИГУРАЦИЯ</p><h2>Параметры OLC RTC</h2></div><span class="step">YAML</span></div>
+        <p class="muted intro">Панель создаёт строгий <code>olcrtc.yaml</code>. Сервер и клиент должны использовать одинаковые комнату, ключ, транспорт и параметры traffic.</p>
+        <form id="settingsForm" class="settings">
+          <fieldset>
+            <legend>Соединение</legend>
+            <div class="fields">
+              <label>Режим<select id="mode"><option value="srv">Сервер (srv)</option><option value="cnc">Клиент (cnc)</option></select><small>Режим gen пока не поддержан встроенными провайдерами</small></label>
+              <label>Провайдер<select id="provider"><option value="jitsi">Jitsi</option><option value="telemost">Яндекс Телемост</option><option value="wbstream">WB Stream</option><option value="none">Прямое подключение</option></select><small>Сервис сигналинга и получения credentials</small></label>
+              <label>Транспорт<select id="transport"><option value="datachannel">Data channel</option><option value="vp8channel">VP8 channel</option><option value="seichannel">SEI channel</option><option value="videochannel">Video channel</option></select><small>Jitsi + datachannel - рекомендуемая комбинация</small></label>
+              <label class="span-2">Комната<input id="roomId" placeholder="https://meet.example.org/myroom"><small>Для Jitsi - полный URL, для Telemost и WB Stream - ID комнаты</small></label>
+              <label>Канал<input id="roomChannel" placeholder="Необязательно"><small>room.channel, если его требует engine</small></label>
+              <label>DNS<input id="dns" placeholder="8.8.8.8:53" required><small>Адрес DNS в формате host:port</small></label>
+              <label class="span-2 provider-token">Токен аккаунта<input id="providerToken" type="password" autocomplete="off"><small>auth.token для WB Stream; обязателен для datachannel и права canPublishData</small></label>
+            </div>
+            <p id="combinationHint" class="hint"></p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Шифрование</legend>
+            <div class="fields">
+              <label class="span-2">Ключ<input id="cryptoKey" type="password" autocomplete="new-password" placeholder="64 hex-символа"><small>Один и тот же 32-байтный ключ на сервере и клиенте</small></label>
+              <div class="inline-action"><button id="generateKey" type="button" class="secondary">Создать ключ</button><button id="copyKey" type="button" class="secondary">Скопировать</button></div>
+              <label class="span-2">Файл ключа<input id="cryptoKeyFile" placeholder="./olcrtc.key"><small>Альтернатива ключу; путь относительно YAML-файла</small></label>
+            </div>
+          </fieldset>
+
+          <fieldset id="engineGroup" hidden>
+            <legend>Прямой engine</legend>
+            <div class="fields">
+              <label>Engine<select id="engineName"><option value="livekit">LiveKit</option><option value="goolom">Goolom</option><option value="jitsi">Jitsi</option></select></label>
+              <label class="span-2">URL<input id="engineUrl" placeholder="wss://..."></label>
+              <label class="span-2">Токен engine<input id="engineToken" type="password" autocomplete="off"></label>
+            </div>
+          </fieldset>
+
+          <fieldset id="clientSocksGroup" hidden>
+            <legend>Локальный SOCKS5 клиента</legend>
+            <div class="fields">
+              <label>Адрес<input id="socksHost" placeholder="127.0.0.1"></label>
+              <label>Порт<input id="socksPort" type="number" min="1" max="65535"></label>
+              <label>Логин<input id="socksUser" autocomplete="off"><small>Обязателен вместе с паролем вне loopback</small></label>
+              <label>Пароль<input id="socksPass" type="password" autocomplete="new-password"></label>
+            </div>
+          </fieldset>
+
+          <fieldset id="serverSocksGroup">
+            <legend>Upstream SOCKS5 сервера <span>необязательно</span></legend>
+            <div class="fields">
+              <label>Адрес<input id="proxyAddr" placeholder="127.0.0.1"></label>
+              <label>Порт<input id="proxyPort" type="number" min="0" max="65535"></label>
+              <label>Логин<input id="proxyUser" autocomplete="off"></label>
+              <label>Пароль<input id="proxyPass" type="password" autocomplete="new-password"></label>
+            </div>
+          </fieldset>
+
+          <fieldset id="vp8Group" hidden>
+            <legend>VP8 channel</legend>
+            <div class="fields"><label>FPS<input id="vp8Fps" type="number" min="1" max="240"></label><label>Размер пакета<input id="vp8BatchSize" type="number" min="1"><small>vp8.batch_size</small></label></div>
+          </fieldset>
+
+          <fieldset id="seiGroup" hidden>
+            <legend>SEI channel</legend>
+            <div class="fields"><label>FPS<input id="seiFps" type="number" min="1" max="240"></label><label>Размер пакета<input id="seiBatchSize" type="number" min="1"></label><label>Фрагмент, байт<input id="seiFragmentSize" type="number" min="1" max="60000"></label><label>ACK, мс<input id="seiAckTimeoutMs" type="number" min="1"></label></div>
+          </fieldset>
+
+          <fieldset id="videoGroup" hidden>
+            <legend>Video channel</legend>
+            <div class="fields">
+              <label>Кодек<select id="videoCodec"><option value="qrcode">QR code</option><option value="tile">Tile</option></select><small>Tile требует 1080 x 1080</small></label>
+              <label>Ширина<input id="videoWidth" type="number" min="16" max="8192"></label>
+              <label>Высота<input id="videoHeight" type="number" min="16" max="8192"></label>
+              <label>FPS<input id="videoFps" type="number" min="1" max="240"></label>
+              <label>Размер QR<input id="videoQrSize" type="number" min="0"><small>0 - автоматический</small></label>
+              <label>Коррекция QR<select id="videoQrRecovery"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="highest">Highest</option></select></label>
+              <label>Размер tile<input id="videoTileModule" type="number" min="0" max="270"></label>
+              <label>Паритет tile, %<input id="videoTileRs" type="number" min="0" max="200"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Надёжность</legend>
+            <div class="fields">
+              <label>Ping-интервал<input id="livenessInterval" placeholder="10s"></label>
+              <label>Таймаут ответа<input id="livenessTimeout" placeholder="15s"></label>
+              <label>Допустимо пропусков<input id="livenessFailures" type="number" min="0"></label>
+              <label>Перезапуск сессии<input id="maxSessionDuration" placeholder="6h"><small>Пусто - выключено</small></label>
+              <label>Лимит payload<input id="maxPayloadSize" type="number" min="0"><small>0 - лимит транспорта; иначе не меньше 53</small></label>
+              <label>Минимальная задержка<input id="minDelay" placeholder="5ms"></label>
+              <label>Максимальная задержка<input id="maxDelay" placeholder="30ms"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Локальные параметры</legend>
+            <div class="fields">
+              <label class="span-2">Каталог словарей<input id="dataDir" placeholder="Необязательно"><small>Каталог с файлами names и surnames; пусто - встроенные словари</small></label>
+              <label class="toggle"><input id="debug" type="checkbox"><span></span>Подробные логи</label>
+            </div>
+          </fieldset>
+
+          <div class="save"><button>Сохранить olcrtc.yaml</button></div>
+        </form>
+      </article>
+      <footer>OLC RTC WEBGUI <span>•</span> OPEN LIBRE COMMUNITY</footer>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

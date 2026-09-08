@@ -52,49 +52,91 @@ func TestAuthentication(t *testing.T) {
 		t.Fatalf("authenticated: %d", w.Code)
 	}
 }
-func TestSaveSettingsWritesEnv(t *testing.T) {
+func validSettings() Settings {
+	s := defaultSettings()
+	s.RoomID = "https://meet.example.org/rtc-room"
+	s.CryptoKey = strings.Repeat("ab", 32)
+	return s
+}
+
+func TestSaveSettingsWritesYAML(t *testing.T) {
 	a := testApp(t)
 	c := loginCookie(t, a)
-	body := `{"provider":"jitsi","transport":"datachannel","providerAddress":"","room":"rtc-room","listenAddress":"127.0.0.1","listenPort":1080,"destination":"example.com:443","autoStart":true}`
-	w := request(a, "PUT", "/api/settings", body, c)
+	s := validSettings()
+	body, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := request(a, "PUT", "/api/settings", string(body), c)
 	if w.Code != 200 {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
-	b, e := os.ReadFile(filepath.Join(a.projectDir, ".env"))
+	b, e := os.ReadFile(filepath.Join(a.projectDir, "olcrtc.yaml"))
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !strings.Contains(string(b), "OLCRTC_TRANSPORT=datachannel") {
-		t.Fatalf("unexpected env: %s", b)
+	for _, want := range []string{"mode: srv", "provider: jitsi", "transport: datachannel", `dns: "8.8.8.8:53"`, `key: "` + s.CryptoKey + `"`} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("YAML does not contain %q:\n%s", want, b)
+		}
 	}
-	var s Settings
-	if e = json.Unmarshal(w.Body.Bytes(), &s); e != nil || s.ListenPort != 1080 {
-		t.Fatalf("response: %v %#v", e, s)
+	var response Settings
+	if e = json.Unmarshal(w.Body.Bytes(), &response); e != nil || response.RoomID != s.RoomID {
+		t.Fatalf("response: %v %#v", e, response)
 	}
 }
 func TestRejectsUnsafeSettings(t *testing.T) {
 	a := testApp(t)
 	c := loginCookie(t, a)
-	body := `{"provider":"cloudflare","transport":"udp","listenAddress":"127.0.0.1","listenPort":1,"autoStart":false}`
-	if w := request(a, "PUT", "/api/settings", body, c); w.Code != 400 {
+	s := validSettings()
+	s.Provider = "cloudflare"
+	body, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := request(a, "PUT", "/api/settings", string(body), c); w.Code != 400 {
 		t.Fatalf("want 400 got %d", w.Code)
 	}
 }
 
 func TestSupportedOLCRTCProvidersAndTransports(t *testing.T) {
-	for _, provider := range []string{"jitsi", "telemost", "wbstream", "none"} {
-		for _, transport := range []string{"datachannel", "vp8channel", "seichannel", "videochannel"} {
-			s := defaultSettings()
-			s.Provider, s.Transport = provider, transport
-			if err := validateSettings(s); err != nil {
-				t.Errorf("%s/%s rejected: %v", provider, transport, err)
-			}
+	for _, pair := range [][2]string{{"jitsi", "datachannel"}, {"jitsi", "vp8channel"}, {"telemost", "vp8channel"}, {"telemost", "videochannel"}, {"wbstream", "vp8channel"}, {"wbstream", "seichannel"}} {
+		s := validSettings()
+		s.Provider, s.Transport = pair[0], pair[1]
+		if err := validateSettings(s); err != nil {
+			t.Errorf("%s/%s rejected: %v", pair[0], pair[1], err)
 		}
 	}
-	s := defaultSettings()
+	s := validSettings()
 	s.Provider = "cloudflare"
 	if err := validateSettings(s); err == nil {
 		t.Error("unsupported provider accepted")
+	}
+	s = validSettings()
+	s.Provider, s.Transport = "telemost", "seichannel"
+	if err := validateSettings(s); err == nil {
+		t.Error("unsupported telemost/seichannel accepted")
+	}
+	s = validSettings()
+	s.Provider, s.Transport = "wbstream", "datachannel"
+	if err := validateSettings(s); err == nil {
+		t.Error("wbstream/datachannel without account token accepted")
+	}
+}
+
+func TestClientAndTransportYAML(t *testing.T) {
+	s := validSettings()
+	s.Mode = "cnc"
+	s.Transport = "seichannel"
+	s.SOCKS.User, s.SOCKS.Pass = "proxy-user", "proxy-pass"
+	if err := validateSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	yaml := settingsYAML(s)
+	for _, want := range []string{"socks:\n", `host: "127.0.0.1"`, "port: 8808", "sei:\n", "fragment_size: 900"} {
+		if !strings.Contains(yaml, want) {
+			t.Fatalf("YAML does not contain %q:\n%s", want, yaml)
+		}
 	}
 }
 
@@ -146,7 +188,7 @@ func TestInstallUpdateIntoDirectoryContainingGeneratedEnv(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(a.projectDir, "README.md")); err != nil {
 		t.Fatalf("checked out repository missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(a.projectDir, ".env")); err != nil {
+	if _, err := os.Stat(filepath.Join(a.projectDir, "olcrtc.yaml")); err != nil {
 		t.Fatalf("generated settings missing: %v", err)
 	}
 }
@@ -158,7 +200,7 @@ func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 		t.Fatalf("root page: %d %s", root.Code, root.Body.String())
 	}
 	css := request(a, http.MethodGet, "/style.css", "", nil)
-	if css.Code != http.StatusOK || !strings.Contains(css.Body.String(), `[hidden]{display:none!important}`) {
+	if css.Code != http.StatusOK || !strings.Contains(css.Body.String(), `[hidden]`) || !strings.Contains(css.Body.String(), `display: none !important`) {
 		t.Fatalf("hidden rule missing: %d %s", css.Code, css.Body.String())
 	}
 	legacy := request(a, http.MethodGet, "/web/", "", nil)
