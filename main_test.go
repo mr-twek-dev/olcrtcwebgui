@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,7 +55,7 @@ func TestAuthentication(t *testing.T) {
 func TestSaveSettingsWritesEnv(t *testing.T) {
 	a := testApp(t)
 	c := loginCookie(t, a)
-	body := `{"provider":"cloudflare","transport":"websocket","domain":"rtc.example.com","listenAddress":"0.0.0.0","listenPort":8443,"upstream":"","autoStart":true}`
+	body := `{"provider":"jitsi","transport":"datachannel","providerAddress":"","room":"rtc-room","listenAddress":"127.0.0.1","listenPort":1080,"destination":"example.com:443","autoStart":true}`
 	w := request(a, "PUT", "/api/settings", body, c)
 	if w.Code != 200 {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
@@ -63,20 +64,90 @@ func TestSaveSettingsWritesEnv(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !strings.Contains(string(b), "OLCRTC_TRANSPORT=websocket") {
+	if !strings.Contains(string(b), "OLCRTC_TRANSPORT=datachannel") {
 		t.Fatalf("unexpected env: %s", b)
 	}
 	var s Settings
-	if e = json.Unmarshal(w.Body.Bytes(), &s); e != nil || s.ListenPort != 8443 {
+	if e = json.Unmarshal(w.Body.Bytes(), &s); e != nil || s.ListenPort != 1080 {
 		t.Fatalf("response: %v %#v", e, s)
 	}
 }
 func TestRejectsUnsafeSettings(t *testing.T) {
 	a := testApp(t)
 	c := loginCookie(t, a)
-	body := `{"provider":"x\nBAD=value","transport":"udp","listenAddress":"0.0.0.0","listenPort":1,"autoStart":false}`
+	body := `{"provider":"cloudflare","transport":"udp","listenAddress":"127.0.0.1","listenPort":1,"autoStart":false}`
 	if w := request(a, "PUT", "/api/settings", body, c); w.Code != 400 {
 		t.Fatalf("want 400 got %d", w.Code)
+	}
+}
+
+func TestSupportedOLCRTCProvidersAndTransports(t *testing.T) {
+	for _, provider := range []string{"jitsi", "telemost", "wbstream", "none"} {
+		for _, transport := range []string{"datachannel", "vp8channel", "seichannel", "videochannel"} {
+			s := defaultSettings()
+			s.Provider, s.Transport = provider, transport
+			if err := validateSettings(s); err != nil {
+				t.Errorf("%s/%s rejected: %v", provider, transport, err)
+			}
+		}
+	}
+	s := defaultSettings()
+	s.Provider = "cloudflare"
+	if err := validateSettings(s); err == nil {
+		t.Error("unsupported provider accepted")
+	}
+}
+
+func TestComposeDetection(t *testing.T) {
+	a := testApp(t)
+	if a.hasComposeFile() {
+		t.Fatal("empty project unexpectedly has a compose file")
+	}
+	if err := os.MkdirAll(a.projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.projectDir, "compose.yaml"), []byte("services: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !a.hasComposeFile() {
+		t.Fatal("compose.yaml was not detected")
+	}
+}
+
+func TestInstallUpdateIntoDirectoryContainingGeneratedEnv(t *testing.T) {
+	repository := filepath.Join(t.TempDir(), "upstream")
+	if err := os.Mkdir(repository, 0755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repository}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-b", "master")
+	git("config", "user.name", "Test")
+	git("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repository, "README.md"), []byte("OLC RTC\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "README.md")
+	git("commit", "-m", "initial")
+
+	a := testApp(t)
+	a.repository = repository
+	if err := a.writeSettings(defaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	w := request(a, http.MethodPost, "/api/update/install", "", loginCookie(t, a))
+	if w.Code != http.StatusOK {
+		t.Fatalf("install: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(a.projectDir, "README.md")); err != nil {
+		t.Fatalf("checked out repository missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.projectDir, ".env")); err != nil {
+		t.Fatalf("generated settings missing: %v", err)
 	}
 }
 
