@@ -79,3 +79,19 @@ func TestRejectsUnsafeSettings(t *testing.T) {
 		t.Fatalf("want 400 got %d", w.Code)
 	}
 }
+
+func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
+	a := testApp(t)
+	root := request(a, http.MethodGet, "/", "", nil)
+	if root.Code != http.StatusOK || !strings.Contains(root.Body.String(), `id="panel" hidden`) {
+		t.Fatalf("root page: %d %s", root.Code, root.Body.String())
+	}
+	css := request(a, http.MethodGet, "/style.css", "", nil)
+	if css.Code != http.StatusOK || !strings.Contains(css.Body.String(), `[hidden]{display:none!important}`) {
+		t.Fatalf("hidden rule missing: %d %s", css.Code, css.Body.String())
+	}
+	legacy := request(a, http.MethodGet, "/web/", "", nil)
+	if legacy.Code != http.StatusPermanentRedirect || legacy.Header().Get("Location") != "/" {
+		t.Fatalf("legacy URL: %d %q", legacy.Code, legacy.Header().Get("Location"))
+	}
+}

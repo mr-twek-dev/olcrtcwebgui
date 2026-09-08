@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -113,8 +114,21 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/service/{action}", a.auth(a.serviceAction))
 	mux.HandleFunc("POST /api/update/check", a.auth(a.checkUpdate))
 	mux.HandleFunc("POST /api/update/install", a.auth(a.installUpdate))
-	mux.Handle("/", http.FileServer(http.FS(webFS)))
+	// Serve the contents of the embedded web directory at the site root. Keeping
+	// the directory itself in the URL used to make / show a directory listing and
+	// encouraged opening /web/ directly.
+	static, err := fs.Sub(webFS, "web")
+	if err != nil {
+		panic(err)
+	}
+	mux.HandleFunc("GET /web", redirectToRoot)
+	mux.HandleFunc("GET /web/", redirectToRoot)
+	mux.Handle("GET /", http.FileServer(http.FS(static)))
 	return securityHeaders(mux)
+}
+
+func redirectToRoot(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/", http.StatusPermanentRedirect)
 }
 
 func securityHeaders(next http.Handler) http.Handler {
