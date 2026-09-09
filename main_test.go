@@ -17,6 +17,11 @@ func testApp(t *testing.T) *App {
 	a.dataDir = t.TempDir()
 	a.projectDir = filepath.Join(t.TempDir(), "olcrtc")
 	a.systemdDir = filepath.Join(t.TempDir(), "systemd")
+	a.memoryInfoPath = filepath.Join(t.TempDir(), "meminfo")
+	a.swapFile = filepath.Join(t.TempDir(), "swapfile")
+	if err := os.WriteFile(a.memoryInfoPath, []byte("MemTotal:       8388608 kB\nSwapTotal:            0 kB\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.saveCredentials("admin", "correct-horse-battery"); err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +270,55 @@ func TestBuildDefinesGoCachesWithoutHome(t *testing.T) {
 	}
 	if err := a.buildOLCRTC(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLowMemoryCreatesAndEnablesSwap(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.memoryInfoPath, []byte("MemTotal:       2097152 kB\nSwapTotal:            0 kB\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	a.runner = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		if name == "fallocate" {
+			return nil, os.WriteFile(a.swapFile, []byte("swap"), 0600)
+		}
+		return nil, nil
+	}
+	if err := a.ensureBuildMemory(); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"fallocate -l 4G " + a.swapFile, "mkswap " + a.swapFile, "swapon " + a.swapFile} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command %q not called:\n%s", want, joined)
+		}
+	}
+}
+
+func TestExistingSwapFileIsNotOverwritten(t *testing.T) {
+	a := testApp(t)
+	if err := os.WriteFile(a.memoryInfoPath, []byte("MemTotal:       2097152 kB\nSwapTotal:            0 kB\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.swapFile, []byte("existing"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	a.runner = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		return nil, nil
+	}
+	if err := a.ensureBuildMemory(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(a.swapFile)
+	if err != nil || string(content) != "existing" {
+		t.Fatalf("existing swap file changed: %q, %v", content, err)
+	}
+	if got := strings.Join(calls, "\n"); got != "swapon "+a.swapFile {
+		t.Fatalf("unexpected commands: %s", got)
 	}
 }
 

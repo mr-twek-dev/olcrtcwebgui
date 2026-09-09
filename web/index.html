@@ -44,8 +44,11 @@
           <dl>
             <div><dt>Версия</dt><dd id="version">-</dd></div>
             <div><dt>Каталог</dt><dd id="projectDir">-</dd></div>
+            <div><dt>ОЗУ</dt><dd id="memoryTotal">-</dd></div>
+            <div><dt>SWAP</dt><dd id="swapTotal">-</dd></div>
             <div class="wide"><dt>Конфигурация</dt><dd id="configPath">-</dd></div>
           </dl>
+          <p id="memoryHint" class="hint" hidden>ОЗУ меньше 4 ГБ, SWAP отключён. Перед сборкой панель автоматически создаст и включит swap-файл размером 4 ГБ.</p>
           <div class="actions"><button data-action="start">Запустить</button><button class="secondary" data-action="restart">Перезапустить</button><button class="danger" data-action="stop">Остановить</button></div>
         </article>
         <article id="updateCard">

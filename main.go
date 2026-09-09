@@ -119,6 +119,7 @@ type attempt struct {
 
 type App struct {
 	dataDir, projectDir, configPath, repository, service, systemdDir string
+	memoryInfoPath, swapFile                                         string
 	secureCookies                                                    bool
 	mu                                                               sync.Mutex
 	sessions                                                         map[string]session
@@ -127,6 +128,8 @@ type App struct {
 	runner                                                           func(string, ...string) ([]byte, error)
 	envRunner                                                        func([]string, string, ...string) ([]byte, error)
 }
+
+const minimumBuildMemory uint64 = 4 * 1024 * 1024 * 1024
 
 func env(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -171,7 +174,7 @@ func main() {
 }
 
 func newApp() *App {
-	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run, envRunner: runWithEnv}
+	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), memoryInfoPath: "/proc/meminfo", swapFile: env("OLCRTC_SWAP_FILE", "/swapfile"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run, envRunner: runWithEnv}
 }
 
 func (a *App) routes() http.Handler {
@@ -683,7 +686,8 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 	} else if strings.TrimSpace(string(local)) != "" {
 		status = "требуется сборка"
 	}
-	jsonOut(w, 200, map[string]any{"installed": installed, "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.configFile(), "repository": a.repository})
+	memoryTotal, swapTotal, _ := a.memoryTotals()
+	jsonOut(w, 200, map[string]any{"installed": installed, "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.configFile(), "repository": a.repository, "memoryTotal": memoryTotal, "swapTotal": swapTotal, "swapRecommended": memoryTotal > 0 && memoryTotal < minimumBuildMemory && swapTotal == 0})
 }
 func (a *App) serviceAction(w http.ResponseWriter, r *http.Request) {
 	action := r.PathValue("action")
@@ -776,6 +780,9 @@ func (a *App) installUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) buildOLCRTC() error {
+	if err := a.ensureBuildMemory(); err != nil {
+		return err
+	}
 	buildEnv, err := a.buildEnvironment()
 	if err != nil {
 		return err
@@ -793,6 +800,78 @@ func (a *App) buildOLCRTC() error {
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("результат сборки не является файлом: %s", a.binaryFile())
+	}
+	return nil
+}
+
+func (a *App) memoryTotals() (uint64, uint64, error) {
+	content, err := os.ReadFile(a.memoryInfoPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	values := map[string]uint64{}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		key := strings.TrimSuffix(fields[0], ":")
+		if key != "MemTotal" && key != "SwapTotal" {
+			continue
+		}
+		kilobytes, parseErr := strconv.ParseUint(fields[1], 10, 64)
+		if parseErr != nil {
+			return 0, 0, fmt.Errorf("прочитать %s: %w", key, parseErr)
+		}
+		values[key] = kilobytes * 1024
+	}
+	if values["MemTotal"] == 0 {
+		return 0, 0, errors.New("в /proc/meminfo отсутствует MemTotal")
+	}
+	return values["MemTotal"], values["SwapTotal"], nil
+}
+
+func (a *App) ensureBuildMemory() error {
+	memoryTotal, swapTotal, err := a.memoryTotals()
+	if err != nil || memoryTotal >= minimumBuildMemory || swapTotal > 0 {
+		return nil
+	}
+	if !filepath.IsAbs(a.swapFile) {
+		return errors.New("OLCRTC_SWAP_FILE должен быть абсолютным путём")
+	}
+	if _, err := os.Stat(a.swapFile); err == nil {
+		out, enableErr := a.runner("swapon", a.swapFile)
+		if enableErr != nil {
+			return fmt.Errorf("включить существующий swap %s: %s", a.swapFile, commandError(out, enableErr))
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("проверить swap-файл %s: %w", a.swapFile, err)
+	}
+
+	out, err := a.runner("fallocate", "-l", "4G", a.swapFile)
+	if err != nil {
+		return fmt.Errorf("создать swap-файл %s: %s", a.swapFile, commandError(out, err))
+	}
+	keepSwapFile := false
+	defer func() {
+		if !keepSwapFile {
+			_ = os.Remove(a.swapFile)
+		}
+	}()
+	if err := os.Chmod(a.swapFile, 0600); err != nil {
+		return fmt.Errorf("установить права 0600 на %s: %w", a.swapFile, err)
+	}
+	out, err = a.runner("mkswap", a.swapFile)
+	if err != nil {
+		return fmt.Errorf("mkswap %s: %s", a.swapFile, commandError(out, err))
+	}
+	// Keep a successfully formatted file even if activation fails, so a retry can
+	// call swapon without allocating and formatting the file again.
+	keepSwapFile = true
+	out, err = a.runner("swapon", a.swapFile)
+	if err != nil {
+		return fmt.Errorf("swapon %s: %s", a.swapFile, commandError(out, err))
 	}
 	return nil
 }

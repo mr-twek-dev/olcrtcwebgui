@@ -20,6 +20,7 @@ const notify = (message, bad = false) => {
 const text = id => $(id).value.trim();
 const number = id => Number($(id).value || 0);
 const set = (id, value) => { $(id).value = value ?? ''; };
+const formatGiB = bytes => bytes ? `${(bytes / (1024 ** 3)).toFixed(1)} ГБ` : '0 ГБ';
 
 async function boot() {
   try {
@@ -208,6 +209,9 @@ async function loadStatus() {
     $('#currentVersion').textContent = s.version || '-';
     $('#projectDir').textContent = s.projectDir;
     $('#configPath').textContent = s.configPath;
+    $('#memoryTotal').textContent = formatGiB(s.memoryTotal);
+    $('#swapTotal').textContent = formatGiB(s.swapTotal);
+    $('#memoryHint').hidden = !s.swapRecommended;
     $('#topStatus').textContent = s.active ? '● Сервер работает' : (s.installed ? '○ Сервер остановлен' : '○ Требуется установка');
     $('#topStatus').classList.toggle('inactive', !s.active);
   } catch (error) {
