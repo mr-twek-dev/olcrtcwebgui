@@ -1,6 +1,8 @@
+@font-face { font-family:"Exo 2"; src:url("/fonts/Exo2-Variable.ttf") format("truetype"); font-style:normal; font-weight:100 900; font-display:swap; }
+@font-face { font-family:"JetBrains Mono"; src:url("/fonts/JetBrainsMono-Variable.woff2") format("woff2"); font-style:normal; font-weight:100 800; font-display:swap; }
 :root { --bg:#020d13; --panel:#061720; --panel-2:#081d27; --ink:#e7f7ff; --muted:#7da6b8; --cyan:#04e7e7; --cyan-soft:#0ca8ba; --cyan-faint:#0ce8ed24; --line:#136478; --green:#00e5b5; --danger:#ff3977; --card:#061720; --lime:#04e7e7; --shadow:0 0 18px #00eaf02e,inset 0 0 24px #007c9120; }
 html { scroll-behavior:smooth; }
-body { min-height:100vh; color:var(--ink); background-color:var(--bg); background-image:linear-gradient(#08cbd40a 1px,transparent 1px),linear-gradient(90deg,#08cbd40a 1px,transparent 1px),radial-gradient(circle at 74% 3%,#007b8a24,transparent 29%),radial-gradient(circle at 18% 100%,#c2006612,transparent 24%); background-size:24px 24px,24px 24px,auto,auto; }
+body { min-height:100vh; color:var(--ink); background-color:var(--bg); background-image:linear-gradient(#08cbd40a 1px,transparent 1px),linear-gradient(90deg,#08cbd40a 1px,transparent 1px),radial-gradient(circle at 74% 3%,#007b8a24,transparent 29%),radial-gradient(circle at 18% 100%,#c2006612,transparent 24%); background-size:24px 24px,24px 24px,auto,auto; font-family:"Exo 2",Inter,ui-sans-serif,system-ui,sans-serif; }
 body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:linear-gradient(90deg,transparent 14%,#00f0ff16 14.05%,transparent 14.1%),linear-gradient(180deg,transparent 72%,#ff00801b 72.08%,transparent 72.16%); }
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
 .logo { width:48px; height:48px; border:1px solid #54fff4; border-radius:12px; color:#001b1e; background:linear-gradient(135deg,#03f7df,#34ffe9 55%,#00c6c9); box-shadow:0 0 20px #00ffe0a6,inset 0 0 10px #fff8; font-size:25px; }
@@ -8,6 +10,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .brand small { color:var(--cyan); font-family:ui-monospace,monospace; }
 .muted { color:var(--muted); }
 .login-card { border:1px solid var(--cyan-soft); border-radius:0; clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px); color:var(--ink); background:linear-gradient(145deg,#071c25f5,#030e14f8); box-shadow:var(--shadow); }
+.login-card h1,article h2,.profile-summary h3,.dialog-head h2,.settings legend { font-family:"Exo 2",Inter,ui-sans-serif,sans-serif; }
 .login-card input,.settings input,.settings select,.settings textarea { border-color:#185267; border-radius:2px; color:var(--ink); background:#04131b; }
 .login-card input:focus,.settings input:focus,.settings select:focus,.settings textarea:focus { border-color:var(--cyan); box-shadow:0 0 0 2px #00ffff1c,0 0 15px #00ffff18; }
 .settings select option { color:var(--ink); background:#061720; }
@@ -32,8 +35,8 @@ nav button.active,nav button:hover { border-color:var(--cyan); color:#eaffff; ba
 .content { max-width:1500px; }
 header { position:relative; min-height:128px; margin-bottom:18px; }
 header::after { content:"OPEN LIBRE COMMUNITY  //  SELF-HOSTED  //  REAL-TIME"; position:absolute; top:2px; right:175px; max-width:300px; color:#1b7086; font:10px/1.6 ui-monospace,monospace; letter-spacing:.18em; text-align:right; }
-header h1 { color:#e4f0ff; font-size:clamp(38px,4.2vw,62px); text-shadow:0 0 17px #c7e6ff20; }
-header h1 em { color:var(--cyan); text-shadow:0 0 20px #00ffff52; }
+header h1 { color:var(--cyan); font-family:"Exo 2",Inter,ui-sans-serif,sans-serif; font-size:clamp(34px,3.5vw,56px); font-style:normal; font-weight:650; line-height:1; letter-spacing:.035em; text-transform:uppercase; white-space:nowrap; text-shadow:0 0 20px #00ffff52; }
+header h1 em { color:inherit; font-style:normal; font-weight:inherit; text-shadow:inherit; }
 .eyebrow { color:var(--cyan); font-family:ui-monospace,monospace; }
 .eyebrow::after { content:"  >>>"; color:#18a9bc; }
 .pill { border:1px solid #00cba7; border-radius:3px; color:#55ffda; background:#053028aa; box-shadow:0 0 15px #00e9b939; }
@@ -44,7 +47,7 @@ article::before { content:""; position:absolute; inset:7px; z-index:-1; border-t
 article::after { content:"///"; position:absolute; right:24px; bottom:20px; color:#16758a; font:10px ui-monospace,monospace; letter-spacing:.18em; }
 #updateCard { background:linear-gradient(135deg,#061923f0,#031017e8),radial-gradient(circle at 85% 45%,#00bad51f,transparent 40%); }
 article h2 { color:#ecf5ff; }
-.status-card h2 { color:#18f1c2; font:700 30px ui-monospace,monospace; }
+.status-card h2 { color:#18f1c2; font:700 30px "JetBrains Mono",ui-monospace,monospace; }
 .pulse { border:1px solid #08d2c1; color:#05efc1; background:#003d3c; box-shadow:0 0 15px #00ffe37a; }
 dl { border-color:#1d6374; }
 dl div:nth-child(odd):not(.wide) { margin-right:28px; border-bottom:1px solid #103e4c; }
@@ -93,9 +96,10 @@ button:disabled { opacity:.38; filter:saturate(.45); }
 #notice:not(:empty) { border:1px solid #00bfa7; border-left:3px solid var(--cyan); border-radius:0; color:#58f5d4; background:#063028; box-shadow:0 0 13px #00dcb52b; }
 #notice.bad { border-color:#a82955; color:#ff6c97; background:#260a19; }
 code { border:1px solid #164454; border-radius:2px; color:#92d2df; background:#061922; }
-footer { color:#346f82; font-family:ui-monospace,monospace; text-align:right; }
+dd,.version-row b,.eyebrow,.brand small,header::after,.step,.profile-order,.host-stats span,.host-stats small,.host-stats b,.service-log,.settings textarea,code,footer { font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace; font-feature-settings:"liga" 1,"calt" 1; }
+footer { color:#346f82; text-align:right; }
 footer span { color:var(--cyan); }
 @media(max-width:1050px) { header::after { display:none; } }
 @media(max-width:850px) { aside { border-right:0; border-bottom:1px solid #0a7f92; } aside::before,aside::after { display:none; } aside .brand { padding:0; border:0; } nav { display:flex; margin:0 0 0 auto; } nav button { width:auto; padding:10px; } nav button span { display:none; } }
-@media(max-width:560px) { .logo { width:40px; height:40px; } aside .brand div { display:none; } header { min-height:165px; } header h1 { font-size:40px; } .pill { display:inline-block; margin-top:12px; } article { padding:22px 18px; } }
+@media(max-width:560px) { .logo { width:40px; height:40px; } aside .brand div { display:none; } header { min-height:165px; } header h1 { font-size:40px; white-space:normal; } .pill { display:inline-block; margin-top:12px; } article { padding:22px 18px; } }
 

@@ -508,8 +508,14 @@ func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 		t.Fatalf("hidden rule missing: %d %s", css.Code, css.Body.String())
 	}
 	theme := request(a, http.MethodGet, "/theme.css", "", nil)
-	if theme.Code != http.StatusOK || !strings.Contains(theme.Body.String(), "--cyan:#04e7e7") {
+	if theme.Code != http.StatusOK || !strings.Contains(theme.Body.String(), "--cyan:#04e7e7") || !strings.Contains(theme.Body.String(), `font-family:"Exo 2"`) {
 		t.Fatalf("theme missing: %d", theme.Code)
+	}
+	for _, path := range []string{"/fonts/Exo2-Variable.ttf", "/fonts/JetBrainsMono-Variable.woff2", "/fonts/OFL-Exo2.txt", "/fonts/OFL-JetBrainsMono.txt"} {
+		font := request(a, http.MethodGet, path, "", nil)
+		if font.Code != http.StatusOK || font.Body.Len() < 1000 {
+			t.Fatalf("bundled font asset %s missing: %d, %d bytes", path, font.Code, font.Body.Len())
+		}
 	}
 	legacy := request(a, http.MethodGet, "/web/", "", nil)
 	if legacy.Code != http.StatusPermanentRedirect || legacy.Header().Get("Location") != "/" {
