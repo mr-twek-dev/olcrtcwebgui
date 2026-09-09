@@ -181,7 +181,7 @@ func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 	}
 	a.runner = func(name string, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
-		if name == "systemctl" {
+		if name == "systemctl" || name == "systemd-analyze" {
 			return nil, nil
 		}
 		return run(name, args...)
@@ -203,13 +203,13 @@ func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("systemd unit missing: %v", err)
 	}
-	for _, want := range []string{"WorkingDirectory=" + systemdQuote(a.projectDir), "ExecStart=" + systemdQuote(a.binaryFile()) + " " + systemdQuote(a.configFile()), "Restart=on-failure"} {
+	for _, want := range []string{"WorkingDirectory=" + filepath.Clean(a.projectDir), "ExecStart=" + filepath.Clean(a.binaryFile()) + " " + filepath.Clean(a.configFile()), "Restart=on-failure"} {
 		if !strings.Contains(string(unit), want) {
 			t.Fatalf("unit does not contain %q:\n%s", want, unit)
 		}
 	}
 	joined := strings.Join(calls, "\n")
-	for _, want := range []string{"mage -d " + a.projectDir + " build", "systemctl daemon-reload", "systemctl enable olcrtc.service"} {
+	for _, want := range []string{"mage -d " + a.projectDir + " build", "systemd-analyze verify " + filepath.Join(a.systemdDir, "olcrtc.service"), "systemctl daemon-reload", "systemctl enable olcrtc.service"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("command %q not called:\n%s", want, joined)
 		}
@@ -333,6 +333,18 @@ func TestNormalizedServiceName(t *testing.T) {
 		if _, err := normalizedServiceName(invalid); err == nil {
 			t.Errorf("invalid service name %q accepted", invalid)
 		}
+	}
+}
+
+func TestSystemdPathsMustBeAbsoluteAndUnambiguous(t *testing.T) {
+	for _, invalid := range []string{"olcrtc", "/opt/olc rtc", "/opt/olcrtc\ninvalid"} {
+		if _, err := systemdAbsolutePath("test", invalid); err == nil {
+			t.Errorf("invalid systemd path %q accepted", invalid)
+		}
+	}
+	absolute := t.TempDir()
+	if got, err := systemdAbsolutePath("test", absolute); err != nil || got != filepath.Clean(absolute) {
+		t.Fatalf("absolute path rejected: %q, %v", got, err)
 	}
 }
 

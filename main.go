@@ -918,6 +918,18 @@ func (a *App) installService() error {
 	if err != nil {
 		return err
 	}
+	projectDir, err := systemdAbsolutePath("OLCRTC_DIR", a.projectDir)
+	if err != nil {
+		return err
+	}
+	binaryFile, err := systemdAbsolutePath("бинарник OLC RTC", a.binaryFile())
+	if err != nil {
+		return err
+	}
+	configFile, err := systemdAbsolutePath("OLCRTC_CONFIG", a.configFile())
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(a.systemdDir, 0755); err != nil {
 		return fmt.Errorf("создать каталог systemd: %w", err)
 	}
@@ -935,9 +947,14 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, systemdQuote(a.projectDir), systemdQuote(a.binaryFile()), systemdQuote(a.configFile()))
-	if err := atomicWrite(filepath.Join(a.systemdDir, serviceName), []byte(unit), 0644); err != nil {
+`, projectDir, binaryFile, configFile)
+	unitFile := filepath.Join(a.systemdDir, serviceName)
+	if err := atomicWrite(unitFile, []byte(unit), 0644); err != nil {
 		return fmt.Errorf("установить systemd-сервис: %w", err)
+	}
+	out, err := a.runner("systemd-analyze", "verify", unitFile)
+	if err != nil && !commandNotFound(err) {
+		return fmt.Errorf("проверить systemd-сервис: %s", commandError(out, err))
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", serviceName}} {
 		out, err := a.runner("systemctl", args...)
@@ -964,10 +981,14 @@ func normalizedServiceName(name string) (string, error) {
 	return name, nil
 }
 
-func systemdQuote(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `"`, `\"`)
-	return `"` + value + `"`
+func systemdAbsolutePath(label, value string) (string, error) {
+	if value == "" || !filepath.IsAbs(value) {
+		return "", fmt.Errorf("%s должен содержать абсолютный путь: %q", label, value)
+	}
+	if strings.ContainsAny(value, "\r\n\t \"'") {
+		return "", fmt.Errorf("%s содержит символы, недопустимые в пути systemd: %q", label, value)
+	}
+	return filepath.Clean(value), nil
 }
 
 func (a *App) binaryFile() string {
