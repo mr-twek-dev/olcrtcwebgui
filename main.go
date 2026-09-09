@@ -25,13 +25,23 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 //go:embed web/*
 var webFS embed.FS
 
 type Settings struct {
-	Mode          string            `json:"mode"`
+	Mode string `json:"mode"`
+	ConnectionSettings
+	DataDir  string            `json:"dataDir"`
+	Debug    bool              `json:"debug"`
+	Profiles []ProfileSettings `json:"profiles,omitempty"`
+	Failover FailoverSettings  `json:"failover"`
+}
+
+type ConnectionSettings struct {
 	Provider      string            `json:"provider"`
 	ProviderToken string            `json:"providerToken"`
 	Transport     string            `json:"transport"`
@@ -40,8 +50,6 @@ type Settings struct {
 	CryptoKey     string            `json:"cryptoKey"`
 	CryptoKeyFile string            `json:"cryptoKeyFile"`
 	DNS           string            `json:"dns"`
-	DataDir       string            `json:"dataDir"`
-	Debug         bool              `json:"debug"`
 	Engine        EngineSettings    `json:"engine"`
 	SOCKS         SOCKSSettings     `json:"socks"`
 	Video         VideoSettings     `json:"video"`
@@ -50,6 +58,16 @@ type Settings struct {
 	Liveness      LivenessSettings  `json:"liveness"`
 	Lifecycle     LifecycleSettings `json:"lifecycle"`
 	Traffic       TrafficSettings   `json:"traffic"`
+}
+
+type ProfileSettings struct {
+	Name string `json:"name"`
+	ConnectionSettings
+}
+
+type FailoverSettings struct {
+	RetryDelay string `json:"retryDelay"`
+	MaxCycles  int    `json:"maxCycles"`
 }
 
 type EngineSettings struct {
@@ -185,6 +203,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/me", a.auth(a.me))
 	mux.HandleFunc("GET /api/settings", a.auth(a.settings))
 	mux.HandleFunc("PUT /api/settings", a.auth(a.saveSettings))
+	mux.HandleFunc("POST /api/share", a.auth(a.shareProfile))
 	mux.HandleFunc("GET /api/status", a.auth(a.status))
 	mux.HandleFunc("POST /api/service/{action}", a.auth(a.serviceAction))
 	mux.HandleFunc("POST /api/update/check", a.auth(a.checkUpdate))
@@ -330,7 +349,105 @@ func (a *App) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, 200, s)
 }
+
+func (a *App) shareProfile(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Settings Settings `json:"settings"`
+		Comment  string   `json:"comment"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	input.Settings.Profiles = nil
+	if input.Settings.CryptoKey == "" && input.Settings.CryptoKeyFile != "" {
+		keyPath := input.Settings.CryptoKeyFile
+		if !filepath.IsAbs(keyPath) {
+			keyPath = filepath.Join(filepath.Dir(a.configFile()), keyPath)
+		}
+		key, err := os.ReadFile(keyPath)
+		if err != nil {
+			apiError(w, http.StatusBadRequest, "Не удалось прочитать файл ключа: "+err.Error())
+			return
+		}
+		input.Settings.CryptoKey = strings.TrimSpace(string(key))
+		input.Settings.CryptoKeyFile = ""
+	}
+	if err := validateSettings(input.Settings); err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	uri, err := clientURI(input.Settings, input.Comment)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	png, err := qrcode.Encode(uri, qrcode.Medium, 320)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "Не удалось создать QR-код: "+err.Error())
+		return
+	}
+	jsonOut(w, http.StatusOK, map[string]string{"uri": uri, "qr": "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)})
+}
+
+func clientURI(s Settings, comment string) (string, error) {
+	if s.CryptoKey == "" {
+		return "", errors.New("для клиентской ссылки нужен crypto.key или доступный файл ключа")
+	}
+	if strings.ContainsAny(s.RoomID, "@#$<>") {
+		return "", errors.New("комната содержит разделитель, недопустимый в olcrtc URI")
+	}
+	if len(comment) > 256 || strings.ContainsAny(comment, "\r\n$") {
+		return "", errors.New("комментарий URI содержит недопустимое значение")
+	}
+	payload := ""
+	switch s.Transport {
+	case "vp8channel":
+		payload = fmt.Sprintf("<vp8-fps=%d&vp8-batch=%d>", s.VP8.FPS, s.VP8.BatchSize)
+	case "seichannel":
+		payload = fmt.Sprintf("<fps=%d&batch=%d&frag=%d&ack-ms=%d>", s.SEI.FPS, s.SEI.BatchSize, s.SEI.FragmentSize, s.SEI.AckTimeoutMS)
+	case "videochannel":
+		payload = fmt.Sprintf("<video-w=%d&video-h=%d&video-fps=%d&video-codec=%s&video-qr-size=%d&video-qr-recovery=%s&video-tile-module=%d&video-tile-rs=%d>", s.Video.Width, s.Video.Height, s.Video.FPS, s.Video.Codec, s.Video.QRSize, s.Video.QRRecovery, s.Video.TileModule, s.Video.TileRS)
+	}
+	return fmt.Sprintf("olcrtc://%s?%s%s@%s#%s$%s", s.Provider, s.Transport, payload, s.RoomID, s.CryptoKey, comment), nil
+}
 func validateSettings(s Settings) error {
+	if len(s.Profiles) == 0 {
+		return validateSingleSettings(s)
+	}
+	if s.Mode != "srv" && s.Mode != "cnc" {
+		return errors.New("режим должен быть srv или cnc")
+	}
+	if s.Failover.RetryDelay == "" {
+		s.Failover.RetryDelay = "2s"
+	}
+	if err := validatePositiveDuration(s.Failover.RetryDelay, "задержка failover"); err != nil {
+		return err
+	}
+	if s.Failover.MaxCycles < 0 {
+		return errors.New("число циклов failover не может быть отрицательным")
+	}
+	names := map[string]bool{}
+	for i, profile := range s.Profiles {
+		name := strings.TrimSpace(profile.Name)
+		if name == "" || len(name) > 64 || strings.ContainsAny(name, "\r\n\x00") {
+			return fmt.Errorf("профиль %d: укажите корректное имя до 64 символов", i+1)
+		}
+		if names[name] {
+			return fmt.Errorf("имя профиля %q повторяется", name)
+		}
+		names[name] = true
+		if err := validateSingleSettings(s.forProfile(profile)); err != nil {
+			return fmt.Errorf("профиль %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (s Settings) forProfile(profile ProfileSettings) Settings {
+	return Settings{Mode: s.Mode, ConnectionSettings: profile.ConnectionSettings, DataDir: s.DataDir, Debug: s.Debug}
+}
+
+func validateSingleSettings(s Settings) error {
 	providers := map[string]bool{"jitsi": true, "telemost": true, "wbstream": true, "none": true}
 	transports := map[string]bool{"datachannel": true, "vp8channel": true, "seichannel": true, "videochannel": true}
 	if s.Mode != "srv" && s.Mode != "cnc" {
@@ -524,12 +641,16 @@ func isLoopback(host string) bool {
 
 func defaultSettings() Settings {
 	return Settings{
-		Mode: "srv", Provider: "jitsi", Transport: "datachannel", DNS: "8.8.8.8:53",
-		SOCKS:    SOCKSSettings{Host: "127.0.0.1", Port: 8808},
-		Video:    VideoSettings{Width: 1920, Height: 1080, FPS: 30, QRRecovery: "low", Codec: "qrcode", TileModule: 4},
-		VP8:      VP8Settings{FPS: 30, BatchSize: 64},
-		SEI:      SEISettings{FPS: 30, BatchSize: 64, FragmentSize: 900, AckTimeoutMS: 2000},
-		Liveness: LivenessSettings{Interval: "10s", Timeout: "15s", Failures: 4},
+		Mode: "srv",
+		ConnectionSettings: ConnectionSettings{
+			Provider: "jitsi", Transport: "datachannel", DNS: "8.8.8.8:53",
+			SOCKS:    SOCKSSettings{Host: "127.0.0.1", Port: 8808},
+			Video:    VideoSettings{Width: 1920, Height: 1080, FPS: 30, QRRecovery: "low", Codec: "qrcode", TileModule: 4},
+			VP8:      VP8Settings{FPS: 30, BatchSize: 64},
+			SEI:      SEISettings{FPS: 30, BatchSize: 64, FragmentSize: 900, AckTimeoutMS: 2000},
+			Liveness: LivenessSettings{Interval: "10s", Timeout: "15s", Failures: 4},
+		},
+		Failover: FailoverSettings{RetryDelay: "2s"},
 	}
 }
 func (a *App) loadSettings() (Settings, error) {
@@ -571,101 +692,141 @@ func (a *App) configFile() string {
 
 func settingsYAML(s Settings) string {
 	var b strings.Builder
-	line := func(indent int, key, value string) {
-		b.WriteString(strings.Repeat("  ", indent))
-		b.WriteString(key)
-		b.WriteString(": ")
-		b.WriteString(value)
-		b.WriteByte('\n')
-	}
-	section := func(name string) { b.WriteString(name + ":\n") }
-	quoted := strconv.Quote
-
 	b.WriteString("# Generated by olcrtcwebgui. Changes made here may be overwritten.\n")
-	line(0, "mode", s.Mode)
-	section("auth")
-	line(1, "provider", s.Provider)
-	if s.ProviderToken != "" {
-		line(1, "token", quoted(s.ProviderToken))
-	}
-	if s.RoomID != "" || s.RoomChannel != "" {
-		section("room")
-		if s.RoomID != "" {
-			line(1, "id", quoted(s.RoomID))
-		}
-		if s.RoomChannel != "" {
-			line(1, "channel", quoted(s.RoomChannel))
-		}
-	}
-	section("crypto")
-	if s.CryptoKey != "" {
-		line(1, "key", quoted(s.CryptoKey))
+	yamlLine(&b, 0, "mode", s.Mode)
+	if len(s.Profiles) == 0 {
+		writeConnectionYAML(&b, s, 0)
 	} else {
-		line(1, "key_file", quoted(s.CryptoKeyFile))
-	}
-	section("net")
-	line(1, "transport", s.Transport)
-	line(1, "dns", quoted(s.DNS))
-	if s.Provider == "none" {
-		section("engine")
-		line(1, "name", s.Engine.Name)
-		line(1, "url", quoted(s.Engine.URL))
-		line(1, "token", quoted(s.Engine.Token))
-	}
-	writeSOCKSYAML(&b, s)
-	writeTransportYAML(&b, s)
-	section("liveness")
-	line(1, "interval", quoted(s.Liveness.Interval))
-	line(1, "timeout", quoted(s.Liveness.Timeout))
-	line(1, "failures", strconv.Itoa(s.Liveness.Failures))
-	if s.Lifecycle.MaxSessionDuration != "" {
-		section("lifecycle")
-		line(1, "max_session_duration", quoted(s.Lifecycle.MaxSessionDuration))
-	}
-	if s.Traffic.MaxPayloadSize != 0 || s.Traffic.MinDelay != "" || s.Traffic.MaxDelay != "" {
-		section("traffic")
-		line(1, "max_payload_size", strconv.Itoa(s.Traffic.MaxPayloadSize))
-		if s.Traffic.MinDelay != "" {
-			line(1, "min_delay", quoted(s.Traffic.MinDelay))
+		yamlSection(&b, 0, "profiles")
+		for _, profile := range s.Profiles {
+			yamlLine(&b, 1, "- name", strconv.Quote(profile.Name))
+			writeConnectionYAML(&b, s.forProfile(profile), 2)
 		}
-		if s.Traffic.MaxDelay != "" {
-			line(1, "max_delay", quoted(s.Traffic.MaxDelay))
+		yamlSection(&b, 0, "failover")
+		retryDelay := s.Failover.RetryDelay
+		if retryDelay == "" {
+			retryDelay = "2s"
 		}
+		yamlLine(&b, 1, "retry_delay", strconv.Quote(retryDelay))
+		yamlLine(&b, 1, "max_cycles", strconv.Itoa(s.Failover.MaxCycles))
 	}
 	if s.DataDir != "" {
-		line(0, "data", quoted(s.DataDir))
+		yamlLine(&b, 0, "data", strconv.Quote(s.DataDir))
 	}
-	line(0, "debug", strconv.FormatBool(s.Debug))
+	yamlLine(&b, 0, "debug", strconv.FormatBool(s.Debug))
 	return b.String()
 }
 
-func writeSOCKSYAML(b *strings.Builder, s Settings) {
+func yamlLine(b *strings.Builder, indent int, key, value string) {
+	b.WriteString(strings.Repeat("  ", indent))
+	b.WriteString(key)
+	b.WriteString(": ")
+	b.WriteString(value)
+	b.WriteByte('\n')
+}
+
+func yamlSection(b *strings.Builder, indent int, name string) {
+	b.WriteString(strings.Repeat("  ", indent))
+	b.WriteString(name)
+	b.WriteString(":\n")
+}
+
+func writeConnectionYAML(b *strings.Builder, s Settings, indent int) {
+	yamlSection(b, indent, "auth")
+	yamlLine(b, indent+1, "provider", s.Provider)
+	if s.ProviderToken != "" {
+		yamlLine(b, indent+1, "token", strconv.Quote(s.ProviderToken))
+	}
+	if s.RoomID != "" || s.RoomChannel != "" {
+		yamlSection(b, indent, "room")
+		if s.RoomID != "" {
+			yamlLine(b, indent+1, "id", strconv.Quote(s.RoomID))
+		}
+		if s.RoomChannel != "" {
+			yamlLine(b, indent+1, "channel", strconv.Quote(s.RoomChannel))
+		}
+	}
+	yamlSection(b, indent, "crypto")
+	if s.CryptoKey != "" {
+		yamlLine(b, indent+1, "key", strconv.Quote(s.CryptoKey))
+	} else {
+		yamlLine(b, indent+1, "key_file", strconv.Quote(s.CryptoKeyFile))
+	}
+	yamlSection(b, indent, "net")
+	yamlLine(b, indent+1, "transport", s.Transport)
+	yamlLine(b, indent+1, "dns", strconv.Quote(s.DNS))
+	if s.Provider == "none" {
+		yamlSection(b, indent, "engine")
+		yamlLine(b, indent+1, "name", s.Engine.Name)
+		yamlLine(b, indent+1, "url", strconv.Quote(s.Engine.URL))
+		yamlLine(b, indent+1, "token", strconv.Quote(s.Engine.Token))
+	}
+	writeSOCKSYAML(b, s, indent)
+	writeTransportYAML(b, s, indent)
+	yamlSection(b, indent, "liveness")
+	yamlLine(b, indent+1, "interval", strconv.Quote(s.Liveness.Interval))
+	yamlLine(b, indent+1, "timeout", strconv.Quote(s.Liveness.Timeout))
+	yamlLine(b, indent+1, "failures", strconv.Itoa(s.Liveness.Failures))
+	if s.Lifecycle.MaxSessionDuration != "" {
+		yamlSection(b, indent, "lifecycle")
+		yamlLine(b, indent+1, "max_session_duration", strconv.Quote(s.Lifecycle.MaxSessionDuration))
+	}
+	if s.Traffic.MaxPayloadSize != 0 || s.Traffic.MinDelay != "" || s.Traffic.MaxDelay != "" {
+		yamlSection(b, indent, "traffic")
+		yamlLine(b, indent+1, "max_payload_size", strconv.Itoa(s.Traffic.MaxPayloadSize))
+		if s.Traffic.MinDelay != "" {
+			yamlLine(b, indent+1, "min_delay", strconv.Quote(s.Traffic.MinDelay))
+		}
+		if s.Traffic.MaxDelay != "" {
+			yamlLine(b, indent+1, "max_delay", strconv.Quote(s.Traffic.MaxDelay))
+		}
+	}
+}
+
+func writeSOCKSYAML(b *strings.Builder, s Settings, indent int) {
 	if s.Mode == "cnc" {
-		b.WriteString("socks:\n")
-		fmt.Fprintf(b, "  host: %s\n  port: %d\n", strconv.Quote(s.SOCKS.Host), s.SOCKS.Port)
+		yamlSection(b, indent, "socks")
+		yamlLine(b, indent+1, "host", strconv.Quote(s.SOCKS.Host))
+		yamlLine(b, indent+1, "port", strconv.Itoa(s.SOCKS.Port))
 		if s.SOCKS.User != "" {
-			fmt.Fprintf(b, "  user: %s\n  pass: %s\n", strconv.Quote(s.SOCKS.User), strconv.Quote(s.SOCKS.Pass))
+			yamlLine(b, indent+1, "user", strconv.Quote(s.SOCKS.User))
+			yamlLine(b, indent+1, "pass", strconv.Quote(s.SOCKS.Pass))
 		}
 		return
 	}
 	if s.Mode == "srv" && s.SOCKS.ProxyAddr != "" {
-		b.WriteString("socks:\n")
-		fmt.Fprintf(b, "  proxy_addr: %s\n  proxy_port: %d\n", strconv.Quote(s.SOCKS.ProxyAddr), s.SOCKS.ProxyPort)
+		yamlSection(b, indent, "socks")
+		yamlLine(b, indent+1, "proxy_addr", strconv.Quote(s.SOCKS.ProxyAddr))
+		yamlLine(b, indent+1, "proxy_port", strconv.Itoa(s.SOCKS.ProxyPort))
 		if s.SOCKS.ProxyUser != "" {
-			fmt.Fprintf(b, "  proxy_user: %s\n  proxy_pass: %s\n", strconv.Quote(s.SOCKS.ProxyUser), strconv.Quote(s.SOCKS.ProxyPass))
+			yamlLine(b, indent+1, "proxy_user", strconv.Quote(s.SOCKS.ProxyUser))
+			yamlLine(b, indent+1, "proxy_pass", strconv.Quote(s.SOCKS.ProxyPass))
 		}
 	}
 }
 
-func writeTransportYAML(b *strings.Builder, s Settings) {
+func writeTransportYAML(b *strings.Builder, s Settings, indent int) {
 	switch s.Transport {
 	case "vp8channel":
-		fmt.Fprintf(b, "vp8:\n  fps: %d\n  batch_size: %d\n", s.VP8.FPS, s.VP8.BatchSize)
+		yamlSection(b, indent, "vp8")
+		yamlLine(b, indent+1, "fps", strconv.Itoa(s.VP8.FPS))
+		yamlLine(b, indent+1, "batch_size", strconv.Itoa(s.VP8.BatchSize))
 	case "seichannel":
-		fmt.Fprintf(b, "sei:\n  fps: %d\n  batch_size: %d\n  fragment_size: %d\n  ack_timeout_ms: %d\n", s.SEI.FPS, s.SEI.BatchSize, s.SEI.FragmentSize, s.SEI.AckTimeoutMS)
+		yamlSection(b, indent, "sei")
+		yamlLine(b, indent+1, "fps", strconv.Itoa(s.SEI.FPS))
+		yamlLine(b, indent+1, "batch_size", strconv.Itoa(s.SEI.BatchSize))
+		yamlLine(b, indent+1, "fragment_size", strconv.Itoa(s.SEI.FragmentSize))
+		yamlLine(b, indent+1, "ack_timeout_ms", strconv.Itoa(s.SEI.AckTimeoutMS))
 	case "videochannel":
-		fmt.Fprintf(b, "video:\n  codec: %s\n  width: %d\n  height: %d\n  fps: %d\n", s.Video.Codec, s.Video.Width, s.Video.Height, s.Video.FPS)
-		fmt.Fprintf(b, "  qr_size: %d\n  qr_recovery: %s\n  tile_module: %d\n  tile_rs: %d\n", s.Video.QRSize, s.Video.QRRecovery, s.Video.TileModule, s.Video.TileRS)
+		yamlSection(b, indent, "video")
+		yamlLine(b, indent+1, "codec", s.Video.Codec)
+		yamlLine(b, indent+1, "width", strconv.Itoa(s.Video.Width))
+		yamlLine(b, indent+1, "height", strconv.Itoa(s.Video.Height))
+		yamlLine(b, indent+1, "fps", strconv.Itoa(s.Video.FPS))
+		yamlLine(b, indent+1, "qr_size", strconv.Itoa(s.Video.QRSize))
+		yamlLine(b, indent+1, "qr_recovery", s.Video.QRRecovery)
+		yamlLine(b, indent+1, "tile_module", strconv.Itoa(s.Video.TileModule))
+		yamlLine(b, indent+1, "tile_rs", strconv.Itoa(s.Video.TileRS))
 	}
 }
 

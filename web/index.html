@@ -60,12 +60,24 @@
 
       <article id="settingsCard">
         <div class="card-head"><div><p class="eyebrow">КОНФИГУРАЦИЯ</p><h2>Параметры OLC RTC</h2></div><span class="step">YAML</span></div>
-        <p class="muted intro">Панель создаёт строгий <code>olcrtc.yaml</code>. Сервер и клиент должны использовать одинаковые комнату, ключ, транспорт и параметры traffic.</p>
+        <p class="muted intro">Панель создаёт строгий <code>olcrtc.yaml</code> с профилями failover. Сервер и клиент должны использовать одинаковый порядок профилей, комнаты, ключи и параметры транспорта.</p>
         <form id="settingsForm" class="settings">
+          <section class="profile-manager">
+            <div class="profile-row">
+              <label>Профиль<select id="profileSelect"></select></label>
+              <label>Название<input id="profileName" maxlength="64" placeholder="Например, jitsi-main"></label>
+              <div class="profile-actions"><button id="addProfile" type="button">+ Новый</button><button id="duplicateProfile" type="button" class="secondary">Дублировать</button><button id="moveProfileUp" type="button" class="secondary" title="Выше в порядке failover">↑</button><button id="moveProfileDown" type="button" class="secondary" title="Ниже в порядке failover">↓</button><button id="deleteProfile" type="button" class="danger">Удалить</button></div>
+            </div>
+            <div class="profile-row failover-row">
+              <label>Задержка failover<input id="failoverRetryDelay" placeholder="2s"></label>
+              <label>Максимум циклов<input id="failoverMaxCycles" type="number" min="0"><small>0 — без ограничения</small></label>
+              <p class="muted">При ошибке OLC RTC последовательно переключается на следующий профиль.</p>
+            </div>
+          </section>
           <fieldset>
             <legend>Соединение</legend>
             <div class="fields">
-              <label>Режим<select id="mode"><option value="srv">Сервер (srv)</option><option value="cnc">Клиент (cnc)</option></select><small>Режим gen пока не поддержан встроенными провайдерами</small></label>
+              <label>Режим<select id="mode"><option value="srv">Сервер (srv)</option><option value="cnc">Клиент (cnc)</option></select><small>Общий для всех профилей; режим gen пока не поддержан встроенными провайдерами</small></label>
               <label>Провайдер<select id="provider"><option value="jitsi">Jitsi</option><option value="telemost">Яндекс Телемост</option><option value="wbstream">WB Stream</option><option value="none">Прямое подключение</option></select><small>Сервис сигналинга и получения credentials</small></label>
               <label>Транспорт<select id="transport"><option value="datachannel">Data channel</option><option value="vp8channel">VP8 channel</option><option value="seichannel">SEI channel</option><option value="videochannel">Video channel</option></select><small>Jitsi + datachannel - рекомендуемая комбинация</small></label>
               <label class="span-2">Комната<input id="roomId" placeholder="https://meet.example.org/myroom"><small>Для Jitsi - полный URL, для Telemost и WB Stream - ID комнаты</small></label>
@@ -148,6 +160,17 @@
               <label>Лимит payload<input id="maxPayloadSize" type="number" min="0"><small>0 - лимит транспорта; иначе не меньше 53</small></label>
               <label>Минимальная задержка<input id="minDelay" placeholder="5ms"></label>
               <label>Максимальная задержка<input id="maxDelay" placeholder="30ms"></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="share-profile">
+            <legend>Подключение клиента</legend>
+            <p class="muted">Создаёт URI формата <code>olcrtc://</code> для выбранного профиля и QR-код. Ключ остаётся внутри панели и QR-кода.</p>
+            <div class="fields">
+              <label class="span-2">Комментарий<input id="shareComment" maxlength="256" placeholder="Название сервера"></label>
+              <div class="inline-action"><button id="generateShare" type="button">Создать ссылку и QR</button></div>
+              <label class="span-2">Клиентская ссылка<textarea id="clientUri" readonly rows="4" placeholder="Ссылка появится после генерации"></textarea></label>
+              <div class="share-output"><img id="qrCode" alt="QR-код подключения OLC RTC" hidden><button id="copyClientUri" type="button" class="secondary">Скопировать ссылку</button></div>
             </div>
           </fieldset>
 
