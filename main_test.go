@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -143,6 +144,85 @@ func TestClientAndTransportYAML(t *testing.T) {
 		if !strings.Contains(yaml, want) {
 			t.Fatalf("YAML does not contain %q:\n%s", want, yaml)
 		}
+	}
+}
+
+func TestProfilesWriteNativeFailoverYAML(t *testing.T) {
+	s := validSettings()
+	jitsi := ProfileSettings{Name: "jitsi-main", ConnectionSettings: s.ConnectionSettings}
+	wb := jitsi
+	wb.Name = "wb-backup"
+	wb.Provider = "wbstream"
+	wb.Transport = "vp8channel"
+	wb.RoomID = "wb-room-01"
+	s.Profiles = []ProfileSettings{jitsi, wb}
+	s.Failover = FailoverSettings{RetryDelay: "3s", MaxCycles: 5}
+	if err := validateSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	yaml := settingsYAML(s)
+	for _, want := range []string{
+		"profiles:\n",
+		`  - name: "jitsi-main"`,
+		"    auth:\n      provider: jitsi",
+		`  - name: "wb-backup"`,
+		"      provider: wbstream",
+		"      transport: vp8channel",
+		"failover:\n  retry_delay: \"3s\"\n  max_cycles: 5",
+	} {
+		if !strings.Contains(yaml, want) {
+			t.Fatalf("profile YAML does not contain %q:\n%s", want, yaml)
+		}
+	}
+}
+
+func TestRejectsDuplicateProfileNames(t *testing.T) {
+	s := validSettings()
+	profile := ProfileSettings{Name: "primary", ConnectionSettings: s.ConnectionSettings}
+	s.Profiles = []ProfileSettings{profile, profile}
+	if err := validateSettings(s); err == nil || !strings.Contains(err.Error(), "повторяется") {
+		t.Fatalf("duplicate names error = %v", err)
+	}
+}
+
+func TestClientURIIncludesTransportPayload(t *testing.T) {
+	s := validSettings()
+	s.Provider = "wbstream"
+	s.Transport = "vp8channel"
+	s.RoomID = "room-01"
+	s.VP8.FPS = 60
+	s.VP8.BatchSize = 64
+	uri, err := clientURI(s, "wb backup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "olcrtc://wbstream?vp8channel<vp8-fps=60&vp8-batch=64>@room-01#" + s.CryptoKey + "$wb backup"
+	if uri != want {
+		t.Fatalf("URI = %q; want %q", uri, want)
+	}
+}
+
+func TestShareEndpointReturnsLocalQRCode(t *testing.T) {
+	a := testApp(t)
+	settings := validSettings()
+	body, err := json.Marshal(map[string]any{"settings": settings, "comment": "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := request(a, http.MethodPost, "/api/share", string(body), loginCookie(t, a))
+	if w.Code != http.StatusOK {
+		t.Fatalf("share: %d %s", w.Code, w.Body.String())
+	}
+	var response struct{ URI, QR string }
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(response.URI, "olcrtc://jitsi?datachannel@") || !strings.HasPrefix(response.QR, "data:image/png;base64,") {
+		t.Fatalf("unexpected share response: %#v", response)
+	}
+	png, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(response.QR, "data:image/png;base64,"))
+	if err != nil || len(png) < 8 || string(png[:8]) != "\x89PNG\r\n\x1a\n" {
+		t.Fatalf("invalid PNG: %v", err)
 	}
 }
 
