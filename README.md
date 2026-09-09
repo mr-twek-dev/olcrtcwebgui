@@ -14,6 +14,7 @@
 - проверка версии через GitHub и fast-forward обновление до upstream HEAD;
 - установка или fast-forward обновление исходников, сборка через Mage и автоматическая установка systemd-сервиса;
 - отображение RAM/SWAP и автоматическое включение swap-файла на 4 ГБ перед сборкой на малом VPS;
+- встроенная диагностика VPS: uptime, load average, память, SWAP и последние строки журналов OLC RTC/WebGUI;
 - запуск, остановка и перезапуск systemd-сервиса.
 
 ## Быстрый старт
@@ -69,12 +70,15 @@ Restart=on-failure
 | `OLCRTC_CONFIG` | `$OLCRTC_DIR/olcrtc.yaml` | Путь к создаваемому YAML-конфигу |
 | `OLCRTC_REPOSITORY` | официальный GitHub | Репозиторий обновлений |
 | `OLCRTC_SERVICE` | `olcrtc` | Имя systemd-сервиса |
+| `OLCRTC_WEB_SERVICE` | `olcrtcwebgui` | Имя systemd-сервиса самой веб-панели для просмотра журнала |
 | `OLCRTC_SYSTEMD_DIR` | `/etc/systemd/system` | Каталог для создаваемого unit-файла |
 | `OLCRTC_GO_CACHE` | `$OLCRTC_WEB_DATA/go-cache` | Каталог GOPATH, модулей и сборочного кэша Go |
 | `OLCRTC_SWAP_FILE` | `/swapfile` | Swap-файл, автоматически включаемый при RAM меньше 4 ГБ и отсутствии SWAP |
 | `OLCRTC_WEB_SECURE_COOKIE` | `false` | Передавать cookie только через HTTPS |
 
-На сервере должны быть установлены `git`, Go версии из `go.mod` OLC RTC (на момент написания — 1.26 или новее) и systemd. Процессу панели нужны права на каталог OLC RTC, запись unit-файла в `OLCRTC_SYSTEMD_DIR` и выполнение `systemctl daemon-reload`, `enable`, `start`, `stop`, `restart` и `is-active` для указанного сервиса. Проще всего проверить установку первым запуском панели от root; для постоянной эксплуатации лучше выдать отдельному системному пользователю минимальные ACL/polkit-разрешения.
+На сервере должны быть установлены `git`, Go версии из `go.mod` OLC RTC (на момент написания — 1.26 или новее) и systemd. Процессу панели нужны права на каталог OLC RTC, запись unit-файла в `OLCRTC_SYSTEMD_DIR`, чтение журналов через `journalctl -u` и выполнение `systemctl daemon-reload`, `enable`, `start`, `stop`, `restart` и `is-active` для указанного сервиса. Проще всего проверить установку первым запуском панели от root; для постоянной эксплуатации лучше выдать отдельному системному пользователю минимальные ACL/polkit-разрешения.
+
+Пункт **«Диагностика»** в боковом меню показывает состояние Linux-хоста и последние 200 строк двух журналов: `OLCRTC_SERVICE` и `OLCRTC_WEB_SERVICE`. Общесистемный журнал не читается. Endpoint диагностики защищён той же авторизацией, что и остальные функции панели.
 
 Панель всегда задаёт `GOPATH`, `GOMODCACHE` и `GOCACHE` внутри `OLCRTC_GO_CACHE`, поэтому сборка работает и в systemd-сервисе без переменной `HOME`. Каталог должен быть доступен процессу панели для записи.
 

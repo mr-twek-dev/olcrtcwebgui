@@ -24,15 +24,15 @@
     <aside>
       <div class="brand"><span class="logo">O</span><div><b>OLC RTC</b><small>CONTROL PANEL</small></div></div>
       <nav>
-        <button class="active">⌂ <span>Обзор</span></button>
-        <button data-scroll="settingsCard">⚙ <span>Конфигурация</span></button>
-        <button data-scroll="updateCard">↻ <span>Обновления</span></button>
+        <button class="active" data-scroll="overview">⌂ <span>Обзор</span></button>
+        <button data-scroll="settingsCard">⚙ <span>Профили</span></button>
+        <button id="openDiagnostics">▤ <span>Диагностика</span></button>
       </nav>
       <div class="aside-bottom"><span class="avatar">A</span><div><b id="currentUser">admin</b><small>Администратор</small></div><button id="logout" title="Выйти">↪</button></div>
     </aside>
 
     <div class="content">
-      <header>
+      <header id="overview">
         <div><p class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</p><h1>Ваш сервер <em>под контролем</em></h1><p class="muted">Настройка, мониторинг и обновление OLC RTC в одном месте.</p></div>
         <span id="topStatus" class="pill">● проверка...</span>
       </header>
@@ -187,6 +187,31 @@
               <div class="share-output"><img id="qrCode" alt="QR-код подключения OLC RTC"><label>Клиентская ссылка<textarea id="clientUri" readonly rows="5"></textarea></label></div>
               <div class="save"><button id="regenerateShare" type="button" class="secondary">Обновить QR</button><button id="copyClientUri" type="button">Скопировать ссылку</button></div>
             </div>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="diagnosticsDialog" class="panel-dialog diagnostics-dialog">
+        <div class="dialog-shell">
+          <div class="dialog-head"><div><p class="eyebrow">ДИАГНОСТИКА</p><h2>Сервер и журналы</h2></div><button id="closeDiagnostics" class="dialog-close" type="button" aria-label="Закрыть">×</button></div>
+          <p class="muted">Текущая нагрузка VPS и последние 200 строк журналов systemd. Данные доступны только после входа в панель.</p>
+          <p id="diagnosticsLoading" class="hint">Загружаем диагностику…</p>
+          <div id="diagnosticsContent" hidden>
+            <section class="host-stats">
+              <div><span>Хост</span><b id="diagHostname">—</b><small id="diagPlatform">—</small></div>
+              <div><span>Uptime</span><b id="diagUptime">—</b><small id="diagUpdated">—</small></div>
+              <div><span>Load average</span><b id="diagLoad">—</b><small id="diagCpus">—</small></div>
+              <div><span>Оперативная память</span><b id="diagMemory">—</b><small id="diagMemoryPercent">—</small></div>
+              <div><span>SWAP</span><b id="diagSwap">—</b><small id="diagSwapPercent">—</small></div>
+            </section>
+            <p id="diagnosticsWarning" class="hint" hidden></p>
+            <div class="log-toolbar">
+              <div><button type="button" class="active" data-log-service="olcrtc">OLC RTC</button><button type="button" data-log-service="webgui">WebGUI</button></div>
+              <button id="refreshDiagnostics" type="button" class="secondary">Обновить</button>
+            </div>
+            <div class="log-meta"><b id="logServiceName">—</b><code id="logUnit">—</code></div>
+            <p id="logError" class="error" hidden></p>
+            <pre id="serviceLog" class="service-log">Журнал пуст.</pre>
           </div>
         </div>
       </dialog>
