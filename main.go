@@ -125,6 +125,7 @@ type App struct {
 	attempts                                                         map[string]attempt
 	updateMu                                                         sync.Mutex
 	runner                                                           func(string, ...string) ([]byte, error)
+	envRunner                                                        func([]string, string, ...string) ([]byte, error)
 }
 
 func env(key, fallback string) string {
@@ -170,7 +171,7 @@ func main() {
 }
 
 func newApp() *App {
-	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run}
+	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run, envRunner: runWithEnv}
 }
 
 func (a *App) routes() http.Handler {
@@ -775,9 +776,13 @@ func (a *App) installUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) buildOLCRTC() error {
-	out, err := a.runner("mage", "-d", a.projectDir, "build")
+	buildEnv, err := a.buildEnvironment()
+	if err != nil {
+		return err
+	}
+	out, err := a.envRunner(buildEnv, "mage", "-d", a.projectDir, "build")
 	if err != nil && commandNotFound(err) {
-		out, err = a.runner("go", "run", "github.com/magefile/mage@latest", "-d", a.projectDir, "build")
+		out, err = a.envRunner(buildEnv, "go", "run", "github.com/magefile/mage@latest", "-d", a.projectDir, "build")
 	}
 	if err != nil {
 		return fmt.Errorf("сборка OLC RTC: %s", commandError(out, err))
@@ -790,6 +795,37 @@ func (a *App) buildOLCRTC() error {
 		return fmt.Errorf("результат сборки не является файлом: %s", a.binaryFile())
 	}
 	return nil
+}
+
+func (a *App) buildEnvironment() ([]string, error) {
+	cacheRoot, err := filepath.Abs(env("OLCRTC_GO_CACHE", filepath.Join(a.dataDir, "go-cache")))
+	if err != nil {
+		return nil, fmt.Errorf("определить каталог кэша Go: %w", err)
+	}
+	goPath := filepath.Join(cacheRoot, "gopath")
+	modCache := filepath.Join(goPath, "pkg", "mod")
+	goCache := filepath.Join(cacheRoot, "build")
+	for _, directory := range []string{goPath, modCache, goCache} {
+		if err := os.MkdirAll(directory, 0755); err != nil {
+			return nil, fmt.Errorf("создать каталог кэша Go %s: %w", directory, err)
+		}
+	}
+	environment := os.Environ()
+	environment = replaceEnv(environment, "GOPATH", goPath)
+	environment = replaceEnv(environment, "GOMODCACHE", modCache)
+	environment = replaceEnv(environment, "GOCACHE", goCache)
+	return environment, nil
+}
+
+func replaceEnv(environment []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, item := range environment {
+		if !strings.HasPrefix(item, prefix) {
+			result = append(result, item)
+		}
+	}
+	return append(result, prefix+value)
 }
 
 func commandNotFound(err error) bool {
@@ -924,8 +960,13 @@ func atomicWrite(path string, b []byte, mode os.FileMode) error {
 	return os.Rename(tmp, path)
 }
 func run(name string, args ...string) ([]byte, error) {
-	ctx := exec.Command(name, args...)
-	return ctx.CombinedOutput()
+	return runWithEnv(os.Environ(), name, args...)
+}
+
+func runWithEnv(environment []string, name string, args ...string) ([]byte, error) {
+	command := exec.Command(name, args...)
+	command.Env = environment
+	return command.CombinedOutput()
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)

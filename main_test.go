@@ -164,7 +164,7 @@ func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 	a := testApp(t)
 	a.repository = repository
 	var calls []string
-	a.runner = func(name string, args ...string) ([]byte, error) {
+	a.envRunner = func(environment []string, name string, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
 		if name == "mage" {
 			if err := os.MkdirAll(filepath.Join(a.projectDir, "build"), 0755); err != nil {
@@ -172,6 +172,10 @@ func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 			}
 			return nil, os.WriteFile(a.binaryFile(), []byte("binary"), 0755)
 		}
+		return runWithEnv(environment, name, args...)
+	}
+	a.runner = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
 		if name == "systemctl" {
 			return nil, nil
 		}
@@ -210,7 +214,7 @@ func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 func TestBuildFallsBackToGoRunMage(t *testing.T) {
 	a := testApp(t)
 	var calls []string
-	a.runner = func(name string, args ...string) ([]byte, error) {
+	a.envRunner = func(environment []string, name string, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
 		if name == "mage" {
 			return nil, &exec.Error{Name: "mage", Err: exec.ErrNotFound}
@@ -226,6 +230,41 @@ func TestBuildFallsBackToGoRunMage(t *testing.T) {
 	want := "go run github.com/magefile/mage@latest -d " + a.projectDir + " build"
 	if !strings.Contains(strings.Join(calls, "\n"), want) {
 		t.Fatalf("fallback not called: %v", calls)
+	}
+}
+
+func TestBuildDefinesGoCachesWithoutHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("GOPATH", "")
+	t.Setenv("GOMODCACHE", "")
+	t.Setenv("GOCACHE", "")
+	a := testApp(t)
+	a.envRunner = func(environment []string, name string, args ...string) ([]byte, error) {
+		values := map[string]string{}
+		for _, item := range environment {
+			if key, value, ok := strings.Cut(item, "="); ok {
+				values[key] = value
+			}
+		}
+		for _, key := range []string{"GOPATH", "GOMODCACHE", "GOCACHE"} {
+			value := values[key]
+			if value == "" {
+				t.Fatalf("%s is not set", key)
+			}
+			if !strings.HasPrefix(value, a.dataDir) {
+				t.Fatalf("%s=%q is outside data directory %q", key, value, a.dataDir)
+			}
+			if info, err := os.Stat(value); err != nil || !info.IsDir() {
+				t.Fatalf("%s directory is not ready: %v", key, err)
+			}
+		}
+		if err := os.MkdirAll(filepath.Join(a.projectDir, "build"), 0755); err != nil {
+			return nil, err
+		}
+		return nil, os.WriteFile(a.binaryFile(), []byte("binary"), 0755)
+	}
+	if err := a.buildOLCRTC(); err != nil {
+		t.Fatal(err)
 	}
 }
 
