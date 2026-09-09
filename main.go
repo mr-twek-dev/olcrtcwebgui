@@ -118,13 +118,13 @@ type attempt struct {
 }
 
 type App struct {
-	dataDir, projectDir, configPath, repository, service string
-	secureCookies                                        bool
-	mu                                                   sync.Mutex
-	sessions                                             map[string]session
-	attempts                                             map[string]attempt
-	updateMu                                             sync.Mutex
-	runner                                               func(string, ...string) ([]byte, error)
+	dataDir, projectDir, configPath, repository, service, systemdDir string
+	secureCookies                                                    bool
+	mu                                                               sync.Mutex
+	sessions                                                         map[string]session
+	attempts                                                         map[string]attempt
+	updateMu                                                         sync.Mutex
+	runner                                                           func(string, ...string) ([]byte, error)
 }
 
 func env(key, fallback string) string {
@@ -163,12 +163,14 @@ func main() {
 	}
 	addr := env("OLCRTC_WEB_ADDR", "127.0.0.1:8080")
 	log.Printf("OLC RTC web panel listening on %s", addr)
-	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 45 * time.Second, IdleTimeout: 60 * time.Second}
+	// Fetching dependencies and compiling OLC RTC can take several minutes on a
+	// small VPS, so keep the response open for the complete installation request.
+	s := &http.Server{Addr: addr, Handler: a.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Minute, IdleTimeout: 60 * time.Second}
 	log.Fatal(s.ListenAndServe())
 }
 
 func newApp() *App {
-	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run}
+	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run}
 }
 
 func (a *App) routes() http.Handler {
@@ -669,14 +671,18 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 	}
 	active := false
 	status := "не установлен"
-	if _, e := os.Stat(filepath.Join(a.projectDir, ".git")); e == nil {
+	installed := a.installationReady()
+	if installed {
 		status = "остановлен"
-		if e := exec.Command("systemctl", "is-active", "--quiet", a.service).Run(); e == nil {
+		serviceName, _ := normalizedServiceName(a.service)
+		if _, e := a.runner("systemctl", "is-active", "--quiet", serviceName); e == nil {
 			active = true
 			status = "работает"
 		}
+	} else if strings.TrimSpace(string(local)) != "" {
+		status = "требуется сборка"
 	}
-	jsonOut(w, 200, map[string]any{"installed": strings.TrimSpace(string(local)) != "", "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.configFile(), "repository": a.repository})
+	jsonOut(w, 200, map[string]any{"installed": installed, "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.configFile(), "repository": a.repository})
 }
 func (a *App) serviceAction(w http.ResponseWriter, r *http.Request) {
 	action := r.PathValue("action")
@@ -684,7 +690,16 @@ func (a *App) serviceAction(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "Неизвестное действие")
 		return
 	}
-	out, err := a.runner("systemctl", action, a.service)
+	if !a.installationReady() {
+		apiError(w, http.StatusConflict, "Сервис не установлен. Нажмите «Установить / обновить»")
+		return
+	}
+	serviceName, err := normalizedServiceName(a.service)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out, err := a.runner("systemctl", action, serviceName)
 	if err != nil {
 		apiError(w, 500, commandError(out, err))
 		return
@@ -706,7 +721,8 @@ func (a *App) checkUpdate(w http.ResponseWriter, r *http.Request) {
 	if localErr != nil {
 		local = nil
 	}
-	jsonOut(w, 200, map[string]any{"current": short(local), "latest": short([]byte(fields[0])), "available": strings.TrimSpace(string(local)) != fields[0]})
+	needsInstall := !a.installationReady()
+	jsonOut(w, 200, map[string]any{"current": short(local), "latest": short([]byte(fields[0])), "available": strings.TrimSpace(string(local)) != fields[0] || needsInstall, "needsInstall": needsInstall})
 }
 func (a *App) installUpdate(w http.ResponseWriter, r *http.Request) {
 	if !a.updateMu.TryLock() {
@@ -747,33 +763,113 @@ func (a *App) installUpdate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	deployed := false
-	if a.hasComposeFile() {
-		out, err := a.compose("up", "-d", "--build")
-		if err != nil {
-			apiError(w, 500, commandError(out, err))
-			return
-		}
-		deployed = true
+	if err := a.buildOLCRTC(); err != nil {
+		apiError(w, 500, err.Error())
+		return
 	}
-	message := "Исходный код OLC RTC обновлён"
-	if deployed {
-		message += " и Docker Compose перезапущен"
+	if err := a.installService(); err != nil {
+		apiError(w, 500, err.Error())
+		return
 	}
-	jsonOut(w, 200, map[string]any{"ok": true, "deployed": deployed, "message": message})
+	jsonOut(w, 200, map[string]any{"ok": true, "message": "OLC RTC обновлён, собран и установлен как systemd-сервис"})
 }
 
-func (a *App) hasComposeFile() bool {
-	for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-		if info, err := os.Stat(filepath.Join(a.projectDir, name)); err == nil && !info.IsDir() {
-			return true
+func (a *App) buildOLCRTC() error {
+	out, err := a.runner("mage", "-d", a.projectDir, "build")
+	if err != nil && commandNotFound(err) {
+		out, err = a.runner("go", "run", "github.com/magefile/mage@latest", "-d", a.projectDir, "build")
+	}
+	if err != nil {
+		return fmt.Errorf("сборка OLC RTC: %s", commandError(out, err))
+	}
+	info, err := os.Stat(a.binaryFile())
+	if err != nil {
+		return fmt.Errorf("сборка завершилась без файла %s: %w", a.binaryFile(), err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("результат сборки не является файлом: %s", a.binaryFile())
+	}
+	return nil
+}
+
+func commandNotFound(err error) bool {
+	var execErr *exec.Error
+	return errors.Is(err, exec.ErrNotFound) || (errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound))
+}
+
+func (a *App) installService() error {
+	serviceName, err := normalizedServiceName(a.service)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(a.systemdDir, 0755); err != nil {
+		return fmt.Errorf("создать каталог systemd: %w", err)
+	}
+	unit := fmt.Sprintf(`[Unit]
+Description=OLC RTC tunnel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%s
+ExecStart=%s %s
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+`, systemdQuote(a.projectDir), systemdQuote(a.binaryFile()), systemdQuote(a.configFile()))
+	if err := atomicWrite(filepath.Join(a.systemdDir, serviceName), []byte(unit), 0644); err != nil {
+		return fmt.Errorf("установить systemd-сервис: %w", err)
+	}
+	for _, args := range [][]string{{"daemon-reload"}, {"enable", serviceName}} {
+		out, err := a.runner("systemctl", args...)
+		if err != nil {
+			return fmt.Errorf("systemctl %s: %s", strings.Join(args, " "), commandError(out, err))
 		}
 	}
-	return false
+	return nil
 }
-func (a *App) compose(args ...string) ([]byte, error) {
-	all := append([]string{"compose", "--project-directory", a.projectDir}, args...)
-	return a.runner("docker", all...)
+
+func normalizedServiceName(name string) (string, error) {
+	if name == "" {
+		return "", errors.New("имя systemd-сервиса не задано")
+	}
+	for _, char := range name {
+		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("_.@-", char) {
+			continue
+		}
+		return "", errors.New("имя systemd-сервиса содержит недопустимые символы")
+	}
+	if !strings.HasSuffix(name, ".service") {
+		name += ".service"
+	}
+	return name, nil
+}
+
+func systemdQuote(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return `"` + value + `"`
+}
+
+func (a *App) binaryFile() string {
+	return filepath.Join(a.projectDir, "build", "olcrtc")
+}
+
+func (a *App) serviceFile() string {
+	name, err := normalizedServiceName(a.service)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(a.systemdDir, name)
+}
+
+func (a *App) installationReady() bool {
+	binary, binaryErr := os.Stat(a.binaryFile())
+	unit, unitErr := os.Stat(a.serviceFile())
+	return binaryErr == nil && binary.Mode().IsRegular() && unitErr == nil && unit.Mode().IsRegular()
 }
 func (a *App) git(args ...string) ([]byte, error) {
 	all := append([]string{"-C", a.projectDir}, args...)
@@ -870,3 +966,4 @@ func short(b []byte) string {
 	}
 	return s
 }
+

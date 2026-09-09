@@ -16,6 +16,7 @@ func testApp(t *testing.T) *App {
 	a := newApp()
 	a.dataDir = t.TempDir()
 	a.projectDir = filepath.Join(t.TempDir(), "olcrtc")
+	a.systemdDir = filepath.Join(t.TempDir(), "systemd")
 	if err := a.saveCredentials("admin", "correct-horse-battery"); err != nil {
 		t.Fatal(err)
 	}
@@ -140,23 +141,7 @@ func TestClientAndTransportYAML(t *testing.T) {
 	}
 }
 
-func TestComposeDetection(t *testing.T) {
-	a := testApp(t)
-	if a.hasComposeFile() {
-		t.Fatal("empty project unexpectedly has a compose file")
-	}
-	if err := os.MkdirAll(a.projectDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(a.projectDir, "compose.yaml"), []byte("services: {}\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if !a.hasComposeFile() {
-		t.Fatal("compose.yaml was not detected")
-	}
-}
-
-func TestInstallUpdateIntoDirectoryContainingGeneratedEnv(t *testing.T) {
+func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 	repository := filepath.Join(t.TempDir(), "upstream")
 	if err := os.Mkdir(repository, 0755); err != nil {
 		t.Fatal(err)
@@ -178,6 +163,20 @@ func TestInstallUpdateIntoDirectoryContainingGeneratedEnv(t *testing.T) {
 
 	a := testApp(t)
 	a.repository = repository
+	var calls []string
+	a.runner = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		if name == "mage" {
+			if err := os.MkdirAll(filepath.Join(a.projectDir, "build"), 0755); err != nil {
+				return nil, err
+			}
+			return nil, os.WriteFile(a.binaryFile(), []byte("binary"), 0755)
+		}
+		if name == "systemctl" {
+			return nil, nil
+		}
+		return run(name, args...)
+	}
 	if err := a.writeSettings(defaultSettings()); err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +189,57 @@ func TestInstallUpdateIntoDirectoryContainingGeneratedEnv(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(a.projectDir, "olcrtc.yaml")); err != nil {
 		t.Fatalf("generated settings missing: %v", err)
+	}
+	unit, err := os.ReadFile(filepath.Join(a.systemdDir, "olcrtc.service"))
+	if err != nil {
+		t.Fatalf("systemd unit missing: %v", err)
+	}
+	for _, want := range []string{"WorkingDirectory=" + systemdQuote(a.projectDir), "ExecStart=" + systemdQuote(a.binaryFile()) + " " + systemdQuote(a.configFile()), "Restart=on-failure"} {
+		if !strings.Contains(string(unit), want) {
+			t.Fatalf("unit does not contain %q:\n%s", want, unit)
+		}
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"mage -d " + a.projectDir + " build", "systemctl daemon-reload", "systemctl enable olcrtc.service"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command %q not called:\n%s", want, joined)
+		}
+	}
+}
+
+func TestBuildFallsBackToGoRunMage(t *testing.T) {
+	a := testApp(t)
+	var calls []string
+	a.runner = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		if name == "mage" {
+			return nil, &exec.Error{Name: "mage", Err: exec.ErrNotFound}
+		}
+		if err := os.MkdirAll(filepath.Join(a.projectDir, "build"), 0755); err != nil {
+			return nil, err
+		}
+		return nil, os.WriteFile(a.binaryFile(), []byte("binary"), 0755)
+	}
+	if err := a.buildOLCRTC(); err != nil {
+		t.Fatal(err)
+	}
+	want := "go run github.com/magefile/mage@latest -d " + a.projectDir + " build"
+	if !strings.Contains(strings.Join(calls, "\n"), want) {
+		t.Fatalf("fallback not called: %v", calls)
+	}
+}
+
+func TestNormalizedServiceName(t *testing.T) {
+	for _, test := range []struct{ in, want string }{{"olcrtc", "olcrtc.service"}, {"olcrtc@server.service", "olcrtc@server.service"}} {
+		got, err := normalizedServiceName(test.in)
+		if err != nil || got != test.want {
+			t.Errorf("normalizedServiceName(%q) = %q, %v; want %q", test.in, got, err, test.want)
+		}
+	}
+	for _, invalid := range []string{"", "../olcrtc", "olcrtc server"} {
+		if _, err := normalizedServiceName(invalid); err == nil {
+			t.Errorf("invalid service name %q accepted", invalid)
+		}
 	}
 }
 
@@ -208,3 +258,4 @@ func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 		t.Fatalf("legacy URL: %d %q", legacy.Code, legacy.Header().Get("Location"))
 	}
 }
+
