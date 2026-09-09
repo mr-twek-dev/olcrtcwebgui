@@ -336,6 +336,18 @@ func TestNormalizedServiceName(t *testing.T) {
 	}
 }
 
+func TestOLCRTCBinaryNameMatchesMageOutput(t *testing.T) {
+	for _, test := range []struct{ goos, goarch, want string }{
+		{"linux", "amd64", "olcrtc-linux-amd64"},
+		{"linux", "arm64", "olcrtc-linux-arm64"},
+		{"windows", "amd64", "olcrtc-windows-amd64.exe"},
+	} {
+		if got := olcrtcBinaryName(test.goos, test.goarch); got != test.want {
+			t.Errorf("olcrtcBinaryName(%q, %q) = %q; want %q", test.goos, test.goarch, got, test.want)
+		}
+	}
+}
+
 func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 	a := testApp(t)
 	root := request(a, http.MethodGet, "/", "", nil)

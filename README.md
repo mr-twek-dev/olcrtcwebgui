@@ -48,9 +48,11 @@ sudo env OLCRTC_WEB_DATA=/var/lib/olcrtcwebgui \
 
 ```ini
 [Service]
-ExecStart=/opt/olcrtc/build/olcrtc /opt/olcrtc/olcrtc.yaml
+ExecStart=/opt/olcrtc/build/olcrtc-linux-amd64 /opt/olcrtc/olcrtc.yaml
 Restart=on-failure
 ```
+
+Имя бинарника соответствует формату Mage `olcrtc-<GOOS>-<GOARCH>`; например, на ARM64 панель использует `olcrtc-linux-arm64`.
 
 По умолчанию панель сохраняет конфиг в `/opt/olcrtc/olcrtc.yaml`; путь можно изменить переменной `OLCRTC_CONFIG`.
 
