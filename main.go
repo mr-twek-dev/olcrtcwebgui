@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -970,7 +971,15 @@ func systemdQuote(value string) string {
 }
 
 func (a *App) binaryFile() string {
-	return filepath.Join(a.projectDir, "build", "olcrtc")
+	return filepath.Join(a.projectDir, "build", olcrtcBinaryName(runtime.GOOS, runtime.GOARCH))
+}
+
+func olcrtcBinaryName(goos, goarch string) string {
+	name := fmt.Sprintf("olcrtc-%s-%s", goos, goarch)
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return name
 }
 
 func (a *App) serviceFile() string {
