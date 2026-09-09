@@ -11,6 +11,7 @@
 - генерация строгого `olcrtc.yaml`, который принимает актуальный CLI OLC RTC;
 - проверка версии через GitHub и fast-forward обновление до upstream HEAD;
 - установка или fast-forward обновление исходников, сборка через Mage и автоматическая установка systemd-сервиса;
+- отображение RAM/SWAP и автоматическое включение swap-файла на 4 ГБ перед сборкой на малом VPS;
 - запуск, остановка и перезапуск systemd-сервиса.
 
 ## Быстрый старт
@@ -38,9 +39,10 @@ sudo env OLCRTC_WEB_DATA=/var/lib/olcrtcwebgui \
 Кнопка **«Установить / обновить»** выполняет весь цикл установки:
 
 1. загружает или обновляет исходники OLC RTC;
-2. запускает `mage -d /opt/olcrtc build` (если Mage не установлен — `go run github.com/magefile/mage@latest`);
-3. создаёт `/etc/systemd/system/olcrtc.service` с путями к бинарнику и YAML-конфигу;
-4. выполняет `systemctl daemon-reload` и `systemctl enable olcrtc.service`.
+2. если RAM меньше 4 ГБ и SWAP отсутствует, создаёт swap-файл на 4 ГБ, устанавливает права `0600` и включает его;
+3. запускает `mage -d /opt/olcrtc build` (если Mage не установлен — `go run github.com/magefile/mage@latest`);
+4. создаёт `/etc/systemd/system/olcrtc.service` с путями к бинарнику и YAML-конфигу;
+5. выполняет `systemctl daemon-reload` и `systemctl enable olcrtc.service`.
 
 Сервис не запускается автоматически: после успешной установки проверьте конфигурацию и нажмите **«Запустить»**. Создаваемый unit эквивалентен следующему:
 
@@ -64,6 +66,7 @@ Restart=on-failure
 | `OLCRTC_SERVICE` | `olcrtc` | Имя systemd-сервиса |
 | `OLCRTC_SYSTEMD_DIR` | `/etc/systemd/system` | Каталог для создаваемого unit-файла |
 | `OLCRTC_GO_CACHE` | `$OLCRTC_WEB_DATA/go-cache` | Каталог GOPATH, модулей и сборочного кэша Go |
+| `OLCRTC_SWAP_FILE` | `/swapfile` | Swap-файл, автоматически включаемый при RAM меньше 4 ГБ и отсутствии SWAP |
 | `OLCRTC_WEB_SECURE_COOKIE` | `false` | Передавать cookie только через HTTPS |
 
 На сервере должны быть установлены `git`, Go версии из `go.mod` OLC RTC (на момент написания — 1.26 или новее) и systemd. Процессу панели нужны права на каталог OLC RTC, запись unit-файла в `OLCRTC_SYSTEMD_DIR` и выполнение `systemctl daemon-reload`, `enable`, `start`, `stop`, `restart` и `is-active` для указанного сервиса. Проще всего проверить установку первым запуском панели от root; для постоянной эксплуатации лучше выдать отдельному системному пользователю минимальные ACL/polkit-разрешения.
