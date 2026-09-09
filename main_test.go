@@ -446,6 +446,11 @@ func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 	if root.Code != http.StatusOK || !strings.Contains(root.Body.String(), `id="panel" hidden`) {
 		t.Fatalf("root page: %d %s", root.Code, root.Body.String())
 	}
+	for _, want := range []string{`id="profileList"`, `id="profileSettingsDialog"`, `id="clientDialog"`, `id="shareLoading"`} {
+		if !strings.Contains(root.Body.String(), want) {
+			t.Fatalf("profile dialog UI does not contain %q", want)
+		}
+	}
 	css := request(a, http.MethodGet, "/style.css", "", nil)
 	if css.Code != http.StatusOK || !strings.Contains(css.Body.String(), `[hidden]`) || !strings.Contains(css.Body.String(), `display: none !important`) {
 		t.Fatalf("hidden rule missing: %d %s", css.Code, css.Body.String())

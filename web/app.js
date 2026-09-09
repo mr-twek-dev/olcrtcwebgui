@@ -23,6 +23,7 @@ const set = (id, value) => { $(id).value = value ?? ''; };
 const formatGiB = bytes => bytes ? `${(bytes / (1024 ** 3)).toFixed(1)} ГБ` : '0 ГБ';
 let profiles = [];
 let activeProfile = 0;
+let pendingNewProfile = -1;
 
 async function boot() {
   try {
@@ -149,35 +150,79 @@ $('#settingsForm').addEventListener('submit', async event => {
   event.preventDefault();
   try {
     saveActiveProfile();
-    const current = formSettings();
-    const payload = {
-      ...current,
-      profiles,
-      failover: {retryDelay: text('#failoverRetryDelay'), maxCycles: number('#failoverMaxCycles')}
-    };
-    await api('/api/settings', {method: 'PUT', body: JSON.stringify(payload)});
-    notify(`Сохранено профилей: ${profiles.length}. Порядок используется для failover.`);
-    await loadStatus();
+    await persistProfiles(`Профиль «${profiles[activeProfile].name}» сохранён.`);
+    pendingNewProfile = -1;
+    $('#profileSettingsDialog').close();
+    renderProfiles();
   } catch (error) {
     notify(error.message, true);
   }
 });
 
+async function persistProfiles(message) {
+  const current = formSettings();
+  const payload = {
+    ...current,
+    profiles,
+    failover: {retryDelay: text('#failoverRetryDelay'), maxCycles: number('#failoverMaxCycles')}
+  };
+  await api('/api/settings', {method: 'PUT', body: JSON.stringify(payload)});
+  if (message) notify(message);
+  await loadStatus();
+}
+
 function renderProfiles() {
-  const select = $('#profileSelect');
-  select.replaceChildren(...profiles.map((profile, index) => {
-    const option = document.createElement('option');
-    option.value = String(index);
-    option.textContent = profile.name;
-    return option;
+  const list = $('#profileList');
+  list.replaceChildren(...profiles.map((profile, index) => {
+    const card = document.createElement('section');
+    card.className = 'profile-card';
+
+    const order = document.createElement('span');
+    order.className = 'profile-order';
+    order.textContent = String(index + 1);
+
+    const summary = document.createElement('div');
+    summary.className = 'profile-summary';
+    const name = document.createElement('h3');
+    name.textContent = profile.name;
+    const meta = document.createElement('p');
+    meta.textContent = `${providerLabel(profile.provider)} · ${transportLabel(profile.transport)}`;
+    const room = document.createElement('small');
+    room.textContent = profile.roomId || 'Комната не указана';
+    summary.append(name, meta, room);
+
+    const actions = document.createElement('div');
+    actions.className = 'profile-card-actions';
+    actions.append(
+      actionButton('Конфигурация', 'secondary', () => openProfileSettings(index)),
+      actionButton('Подключение клиента', '', () => openClientConnection(index)),
+      actionButton('↑', 'icon secondary', () => moveProfile(index, -1), 'Выше в порядке failover', index === 0),
+      actionButton('↓', 'icon secondary', () => moveProfile(index, 1), 'Ниже в порядке failover', index === profiles.length - 1),
+      actionButton('Дублировать', 'text secondary', () => duplicateProfile(index)),
+      actionButton('Удалить', 'text danger', () => deleteProfile(index), '', profiles.length === 1)
+    );
+    card.append(order, summary, actions);
+    return card;
   }));
-  select.value = String(activeProfile);
-  set('#profileName', profiles[activeProfile]?.name || '');
-  $('#deleteProfile').disabled = profiles.length === 1;
-  $('#moveProfileUp').disabled = activeProfile === 0;
-  $('#moveProfileDown').disabled = activeProfile === profiles.length - 1;
-  set('#shareComment', profiles[activeProfile]?.name || '');
-  clearShare();
+}
+
+function actionButton(label, className, handler, title = '', disabled = false) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.textContent = label;
+  button.title = title;
+  button.disabled = disabled;
+  button.onclick = handler;
+  return button;
+}
+
+function providerLabel(provider) {
+  return {jitsi: 'Jitsi', telemost: 'Яндекс Телемост', wbstream: 'WB Stream', none: 'Прямое подключение'}[provider] || provider;
+}
+
+function transportLabel(transport) {
+  return {datachannel: 'Data channel', vp8channel: 'VP8 channel', seichannel: 'SEI channel', videochannel: 'Video channel'}[transport] || transport;
 }
 
 function saveActiveProfile() {
@@ -186,87 +231,126 @@ function saveActiveProfile() {
   profiles[activeProfile] = {name, ...connectionSettings(formSettings())};
 }
 
-$('#profileSelect').addEventListener('change', event => {
-  saveActiveProfile();
-  activeProfile = Number(event.target.value);
-  renderProfiles();
-  fillConnectionSettings(profiles[activeProfile]);
+function openProfileSettings(index, isNew = false) {
+  activeProfile = index;
+  pendingNewProfile = isNew ? index : -1;
+  set('#profileName', profiles[index].name);
+  fillConnectionSettings(profiles[index]);
+  $('#settingsDialogTitle').textContent = profiles[index].name;
   refreshForm();
-});
+  $('#profileSettingsDialog').showModal();
+}
 
-$('#profileName').addEventListener('input', () => {
-  if (!profiles[activeProfile]) return;
-  profiles[activeProfile].name = text('#profileName') || `Профиль ${activeProfile + 1}`;
-  $('#profileSelect').options[activeProfile].textContent = profiles[activeProfile].name;
+function closeProfileSettings() {
+  if (pendingNewProfile >= 0) {
+    profiles.splice(pendingNewProfile, 1);
+    activeProfile = Math.max(0, Math.min(activeProfile, profiles.length - 1));
+    pendingNewProfile = -1;
+    renderProfiles();
+  }
+  $('#profileSettingsDialog').close();
+  loadSettings().catch(error => notify(error.message, true));
+}
+
+$('#closeSettings').onclick = closeProfileSettings;
+$('#cancelSettings').onclick = closeProfileSettings;
+$('#profileSettingsDialog').addEventListener('cancel', event => {
+  event.preventDefault();
+  closeProfileSettings();
 });
 
 $('#addProfile').onclick = () => {
-  saveActiveProfile();
-  const defaults = profiles[activeProfile] ? structuredClone(profiles[activeProfile]) : connectionSettings(formSettings());
-  profiles.push({...defaults, name: `Профиль ${profiles.length + 1}`});
+  const source = profiles[activeProfile] || connectionSettings(formSettings());
+  profiles.push({...structuredClone(source), name: uniqueProfileName('Новый профиль')});
   activeProfile = profiles.length - 1;
   renderProfiles();
-  fillConnectionSettings(profiles[activeProfile]);
-  refreshForm();
+  openProfileSettings(activeProfile, true);
 };
 
-$('#duplicateProfile').onclick = () => {
-  saveActiveProfile();
-  const copy = structuredClone(profiles[activeProfile]);
-  copy.name = `${copy.name} — копия`;
-  profiles.splice(activeProfile + 1, 0, copy);
-  activeProfile += 1;
-  renderProfiles();
-  fillConnectionSettings(copy);
-  refreshForm();
-};
-
-function moveActiveProfile(offset) {
-  saveActiveProfile();
-  const target = activeProfile + offset;
-  if (target < 0 || target >= profiles.length) return;
-  [profiles[activeProfile], profiles[target]] = [profiles[target], profiles[activeProfile]];
-  activeProfile = target;
-  renderProfiles();
-  fillConnectionSettings(profiles[activeProfile]);
-  refreshForm();
+function uniqueProfileName(base) {
+  let candidate = base;
+  let suffix = 2;
+  while (profiles.some(profile => profile.name === candidate)) candidate = `${base} ${suffix++}`;
+  return candidate;
 }
 
-$('#moveProfileUp').onclick = () => moveActiveProfile(-1);
-$('#moveProfileDown').onclick = () => moveActiveProfile(1);
+function duplicateProfile(index) {
+  const copy = structuredClone(profiles[index]);
+  copy.name = uniqueProfileName(`${copy.name} — копия`);
+  profiles.splice(index + 1, 0, copy);
+  activeProfile = index + 1;
+  renderProfiles();
+  openProfileSettings(activeProfile, true);
+}
 
-$('#deleteProfile').onclick = () => {
-  if (profiles.length === 1 || !confirm(`Удалить профиль «${profiles[activeProfile].name}»?`)) return;
-  profiles.splice(activeProfile, 1);
+async function moveProfile(index, offset) {
+  const target = index + offset;
+  if (target < 0 || target >= profiles.length) return;
+  [profiles[index], profiles[target]] = [profiles[target], profiles[index]];
+  activeProfile = target;
+  renderProfiles();
+  try {
+    await persistProfiles('Порядок failover сохранён.');
+  } catch (error) {
+    notify(error.message, true);
+    await loadSettings();
+  }
+}
+
+async function deleteProfile(index) {
+  if (profiles.length === 1 || !confirm(`Удалить профиль «${profiles[index].name}»?`)) return;
+  profiles.splice(index, 1);
   activeProfile = Math.min(activeProfile, profiles.length - 1);
   renderProfiles();
-  fillConnectionSettings(profiles[activeProfile]);
-  refreshForm();
-};
+  try {
+    await persistProfiles('Профиль удалён.');
+  } catch (error) {
+    notify(error.message, true);
+    await loadSettings();
+  }
+}
 
 function clearShare() {
   set('#clientUri', '');
-  $('#qrCode').hidden = true;
   $('#qrCode').removeAttribute('src');
+  $('#shareResult').hidden = true;
+  $('#shareLoading').hidden = false;
 }
 
-$('#generateShare').onclick = async () => {
-  const button = $('#generateShare');
+async function openClientConnection(index) {
+  activeProfile = index;
+  set('#shareComment', profiles[index].name);
+  $('#clientDialogTitle').textContent = profiles[index].name;
+  clearShare();
+  $('#clientDialog').showModal();
+  await generateShare();
+}
+
+async function generateShare() {
+  const button = $('#regenerateShare');
   button.disabled = true;
+  $('#shareLoading').hidden = false;
+  $('#shareLoading').textContent = 'Создаём ссылку и QR-код…';
+  $('#shareLoading').classList.remove('bad');
+  $('#shareResult').hidden = true;
   try {
-    saveActiveProfile();
     const settings = {...formSettings(), ...connectionSettings(profiles[activeProfile])};
     const result = await api('/api/share', {method: 'POST', body: JSON.stringify({settings, comment: text('#shareComment')})});
     set('#clientUri', result.uri);
     $('#qrCode').src = result.qr;
-    $('#qrCode').hidden = false;
-    notify('Клиентская ссылка и QR-код созданы локально.');
+    $('#shareLoading').hidden = true;
+    $('#shareResult').hidden = false;
   } catch (error) {
-    notify(error.message, true);
+    $('#shareLoading').textContent = error.message;
+    $('#shareLoading').classList.add('bad');
   } finally {
     button.disabled = false;
   }
-};
+}
+
+$('#regenerateShare').onclick = generateShare;
+$('#closeClient').onclick = () => $('#clientDialog').close();
+$('#clientDialog').addEventListener('close', () => $('#shareLoading').classList.remove('bad'));
 
 $('#copyClientUri').onclick = async () => {
   const uri = text('#clientUri');
