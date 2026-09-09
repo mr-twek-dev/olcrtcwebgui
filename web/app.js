@@ -208,7 +208,7 @@ async function loadStatus() {
     $('#currentVersion').textContent = s.version || '-';
     $('#projectDir').textContent = s.projectDir;
     $('#configPath').textContent = s.configPath;
-    $('#topStatus').textContent = s.active ? '● Сервер работает' : '○ Сервер остановлен';
+    $('#topStatus').textContent = s.active ? '● Сервер работает' : (s.installed ? '○ Сервер остановлен' : '○ Требуется установка');
     $('#topStatus').classList.toggle('inactive', !s.active);
   } catch (error) {
     notify(error.message, true);
@@ -238,7 +238,7 @@ $('#checkUpdate').onclick = async () => {
     $('#currentVersion').textContent = update.current || 'не установлена';
     $('#latestVersion').textContent = update.latest;
     $('#installUpdate').disabled = !update.available;
-    notify(update.available ? 'Доступна новая версия' : 'Установлена актуальная версия');
+    notify(update.needsInstall ? 'Требуется сборка и установка сервиса' : (update.available ? 'Доступна новая версия' : 'Установлена актуальная версия'));
   } catch (error) {
     notify(error.message, true);
   } finally {
@@ -249,7 +249,7 @@ $('#checkUpdate').onclick = async () => {
 $('#installUpdate').onclick = async () => {
   const button = $('#installUpdate');
   button.disabled = true;
-  button.textContent = 'Обновляем...';
+  button.textContent = 'Устанавливаем...';
   try {
     const result = await api('/api/update/install', {method: 'POST'});
     notify(result.message);
@@ -257,7 +257,7 @@ $('#installUpdate').onclick = async () => {
   } catch (error) {
     notify(error.message, true);
   } finally {
-    button.textContent = 'Обновить';
+    button.textContent = 'Установить / обновить';
     button.disabled = false;
   }
 };
@@ -267,3 +267,4 @@ document.querySelectorAll('[data-scroll]').forEach(button => {
 });
 
 boot();
+
