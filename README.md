@@ -4,6 +4,7 @@
 
 ## Возможности
 
+- адаптивный тёмный интерфейс управления в техно-стилистике OLC RTC;
 - вход по логину и паролю, защищённая HttpOnly-сессия и ограничение перебора;
 - выбор режима `srv` или `cnc`, провайдера (`jitsi`, `telemost`, `wbstream`, `none`) и транспорта (`datachannel`, `vp8channel`, `seichannel`, `videochannel`);
 - настройки комнаты, шифрования, DNS, SOCKS5, engine, liveness, lifecycle, traffic и параметров видео-транспортов;
