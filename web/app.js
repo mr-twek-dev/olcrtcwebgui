@@ -24,6 +24,8 @@ const formatGiB = bytes => bytes ? `${(bytes / (1024 ** 3)).toFixed(1)} ГБ` : 
 let profiles = [];
 let activeProfile = 0;
 let pendingNewProfile = -1;
+let diagnosticsData = null;
+let activeLogService = 'olcrtc';
 
 async function boot() {
   try {
@@ -490,7 +492,96 @@ $('#installUpdate').onclick = async () => {
 };
 
 document.querySelectorAll('[data-scroll]').forEach(button => {
-  button.onclick = () => document.getElementById(button.dataset.scroll).scrollIntoView({behavior: 'smooth'});
+  button.onclick = () => {
+    setActiveNavigation(button);
+    document.getElementById(button.dataset.scroll).scrollIntoView({behavior: 'smooth', block: 'start'});
+  };
+});
+
+function setActiveNavigation(active) {
+  document.querySelectorAll('nav button').forEach(button => button.classList.toggle('active', button === active));
+}
+
+function formatUptime(seconds) {
+  if (!seconds) return '—';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return [days && `${days} д`, hours && `${hours} ч`, `${minutes} мин`].filter(Boolean).join(' ');
+}
+
+function usedMemory(total, available) {
+  return Math.max(0, Number(total || 0) - Number(available || 0));
+}
+
+function usagePercent(used, total) {
+  return total ? `${Math.round(used / total * 100)}% использовано` : 'не используется';
+}
+
+async function openDiagnostics() {
+  setActiveNavigation($('#openDiagnostics'));
+  if (!$('#diagnosticsDialog').open) $('#diagnosticsDialog').showModal();
+  await loadDiagnostics();
+}
+
+async function loadDiagnostics() {
+  const refresh = $('#refreshDiagnostics');
+  refresh.disabled = true;
+  $('#diagnosticsLoading').hidden = false;
+  $('#diagnosticsLoading').classList.remove('bad');
+  $('#diagnosticsLoading').textContent = 'Загружаем диагностику…';
+  $('#diagnosticsContent').hidden = true;
+  try {
+    diagnosticsData = await api('/api/diagnostics');
+    const host = diagnosticsData.host;
+    const memoryUsed = usedMemory(host.memoryTotal, host.memoryAvailable);
+    const swapUsed = usedMemory(host.swapTotal, host.swapFree);
+    $('#diagHostname').textContent = host.hostname || '—';
+    $('#diagPlatform').textContent = `${host.os}/${host.arch}`;
+    $('#diagUptime').textContent = formatUptime(host.uptimeSeconds);
+    $('#diagUpdated').textContent = new Date(diagnosticsData.generatedAt).toLocaleString('ru-RU');
+    $('#diagLoad').textContent = `${host.load1.toFixed(2)} · ${host.load5.toFixed(2)} · ${host.load15.toFixed(2)}`;
+    $('#diagCpus').textContent = `CPU: ${host.cpus}`;
+    $('#diagMemory').textContent = `${formatGiB(memoryUsed)} / ${formatGiB(host.memoryTotal)}`;
+    $('#diagMemoryPercent').textContent = usagePercent(memoryUsed, host.memoryTotal);
+    $('#diagSwap').textContent = `${formatGiB(swapUsed)} / ${formatGiB(host.swapTotal)}`;
+    $('#diagSwapPercent').textContent = usagePercent(swapUsed, host.swapTotal);
+    $('#diagnosticsWarning').textContent = diagnosticsData.hostError || '';
+    $('#diagnosticsWarning').hidden = !diagnosticsData.hostError;
+    renderServiceLog();
+    $('#diagnosticsLoading').hidden = true;
+    $('#diagnosticsContent').hidden = false;
+  } catch (error) {
+    $('#diagnosticsLoading').textContent = error.message;
+    $('#diagnosticsLoading').classList.add('bad');
+  } finally {
+    refresh.disabled = false;
+  }
+}
+
+function renderServiceLog() {
+  const journal = diagnosticsData?.services?.[activeLogService];
+  if (!journal) return;
+  document.querySelectorAll('[data-log-service]').forEach(button => button.classList.toggle('active', button.dataset.logService === activeLogService));
+  $('#logServiceName').textContent = journal.name;
+  $('#logUnit').textContent = journal.unit;
+  $('#logError').textContent = journal.error || '';
+  $('#logError').hidden = !journal.error;
+  $('#serviceLog').textContent = journal.log || 'Журнал пуст.';
+}
+
+$('#openDiagnostics').onclick = openDiagnostics;
+$('#refreshDiagnostics').onclick = loadDiagnostics;
+$('#closeDiagnostics').onclick = () => $('#diagnosticsDialog').close();
+$('#diagnosticsDialog').addEventListener('cancel', event => {
+  event.preventDefault();
+  $('#diagnosticsDialog').close();
+});
+document.querySelectorAll('[data-log-service]').forEach(button => {
+  button.onclick = () => {
+    activeLogService = button.dataset.logService;
+    renderServiceLog();
+  };
 });
 
 boot();

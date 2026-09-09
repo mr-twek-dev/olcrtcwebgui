@@ -136,16 +136,23 @@ type attempt struct {
 	Since time.Time
 }
 
+type serviceJournal struct {
+	Name  string `json:"name"`
+	Unit  string `json:"unit"`
+	Log   string `json:"log"`
+	Error string `json:"error,omitempty"`
+}
+
 type App struct {
-	dataDir, projectDir, configPath, repository, service, systemdDir string
-	memoryInfoPath, swapFile                                         string
-	secureCookies                                                    bool
-	mu                                                               sync.Mutex
-	sessions                                                         map[string]session
-	attempts                                                         map[string]attempt
-	updateMu                                                         sync.Mutex
-	runner                                                           func(string, ...string) ([]byte, error)
-	envRunner                                                        func([]string, string, ...string) ([]byte, error)
+	dataDir, projectDir, configPath, repository, service, webService, systemdDir string
+	memoryInfoPath, uptimePath, loadavgPath, swapFile                            string
+	secureCookies                                                                bool
+	mu                                                                           sync.Mutex
+	sessions                                                                     map[string]session
+	attempts                                                                     map[string]attempt
+	updateMu                                                                     sync.Mutex
+	runner                                                                       func(string, ...string) ([]byte, error)
+	envRunner                                                                    func([]string, string, ...string) ([]byte, error)
 }
 
 const minimumBuildMemory uint64 = 4 * 1024 * 1024 * 1024
@@ -193,7 +200,7 @@ func main() {
 }
 
 func newApp() *App {
-	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), memoryInfoPath: "/proc/meminfo", swapFile: env("OLCRTC_SWAP_FILE", "/swapfile"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run, envRunner: runWithEnv}
+	return &App{dataDir: env("OLCRTC_WEB_DATA", "./data"), projectDir: env("OLCRTC_DIR", "/opt/olcrtc"), configPath: os.Getenv("OLCRTC_CONFIG"), repository: env("OLCRTC_REPOSITORY", "https://github.com/openlibrecommunity/olcrtc.git"), service: env("OLCRTC_SERVICE", "olcrtc"), webService: env("OLCRTC_WEB_SERVICE", "olcrtcwebgui"), systemdDir: env("OLCRTC_SYSTEMD_DIR", "/etc/systemd/system"), memoryInfoPath: "/proc/meminfo", uptimePath: "/proc/uptime", loadavgPath: "/proc/loadavg", swapFile: env("OLCRTC_SWAP_FILE", "/swapfile"), secureCookies: env("OLCRTC_WEB_SECURE_COOKIE", "false") == "true", sessions: map[string]session{}, attempts: map[string]attempt{}, runner: run, envRunner: runWithEnv}
 }
 
 func (a *App) routes() http.Handler {
@@ -205,6 +212,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("PUT /api/settings", a.auth(a.saveSettings))
 	mux.HandleFunc("POST /api/share", a.auth(a.shareProfile))
 	mux.HandleFunc("GET /api/status", a.auth(a.status))
+	mux.HandleFunc("GET /api/diagnostics", a.auth(a.diagnostics))
 	mux.HandleFunc("POST /api/service/{action}", a.auth(a.serviceAction))
 	mux.HandleFunc("POST /api/update/check", a.auth(a.checkUpdate))
 	mux.HandleFunc("POST /api/update/install", a.auth(a.installUpdate))
@@ -851,6 +859,88 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 	memoryTotal, swapTotal, _ := a.memoryTotals()
 	jsonOut(w, 200, map[string]any{"installed": installed, "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.configFile(), "repository": a.repository, "memoryTotal": memoryTotal, "swapTotal": swapTotal, "swapRecommended": memoryTotal > 0 && memoryTotal < minimumBuildMemory && swapTotal == 0})
 }
+
+func (a *App) diagnostics(w http.ResponseWriter, r *http.Request) {
+	hostname, _ := os.Hostname()
+	memory, memoryErr := a.memoryValues()
+	uptime, uptimeErr := readFirstFloat(a.uptimePath)
+	load, loadErr := readLoadAverage(a.loadavgPath)
+	errorsList := make([]string, 0, 3)
+	for _, item := range []struct {
+		label string
+		err   error
+	}{{"память", memoryErr}, {"uptime", uptimeErr}, {"load average", loadErr}} {
+		if item.err != nil {
+			errorsList = append(errorsList, item.label+": "+item.err.Error())
+		}
+	}
+	jsonOut(w, http.StatusOK, map[string]any{
+		"generatedAt": time.Now().Format(time.RFC3339),
+		"host": map[string]any{
+			"hostname": hostname, "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
+			"uptimeSeconds": uptime, "load1": load[0], "load5": load[1], "load15": load[2],
+			"memoryTotal": memory["MemTotal"], "memoryAvailable": memory["MemAvailable"],
+			"swapTotal": memory["SwapTotal"], "swapFree": memory["SwapFree"],
+		},
+		"hostError": strings.Join(errorsList, "; "),
+		"services": map[string]serviceJournal{
+			"olcrtc": a.readServiceJournal("OLC RTC", a.service),
+			"webgui": a.readServiceJournal("WebGUI", a.webService),
+		},
+	})
+}
+
+func (a *App) readServiceJournal(label, service string) serviceJournal {
+	unit, err := normalizedServiceName(service)
+	if err != nil {
+		return serviceJournal{Name: label, Unit: service, Error: err.Error()}
+	}
+	out, runErr := a.runner("journalctl", "-u", unit, "--no-pager", "-n", "200", "-o", "short-iso")
+	const maxLogBytes = 512 * 1024
+	if len(out) > maxLogBytes {
+		out = append([]byte("… показан конец журнала …\n"), out[len(out)-maxLogBytes:]...)
+	}
+	journal := serviceJournal{Name: label, Unit: unit, Log: strings.TrimSpace(string(out))}
+	if runErr != nil {
+		journal.Error = commandError(out, runErr)
+	}
+	if journal.Log == "" && journal.Error == "" {
+		journal.Log = "Записей в журнале пока нет."
+	}
+	return journal
+}
+
+func readFirstFloat(path string) (float64, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(content))
+	if len(fields) == 0 {
+		return 0, errors.New("пустой файл")
+	}
+	return strconv.ParseFloat(fields[0], 64)
+}
+
+func readLoadAverage(path string) ([3]float64, error) {
+	var load [3]float64
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return load, err
+	}
+	fields := strings.Fields(string(content))
+	if len(fields) < 3 {
+		return load, errors.New("неполные данные")
+	}
+	for i := range load {
+		load[i], err = strconv.ParseFloat(fields[i], 64)
+		if err != nil {
+			return load, err
+		}
+	}
+	return load, nil
+}
+
 func (a *App) serviceAction(w http.ResponseWriter, r *http.Request) {
 	action := r.PathValue("action")
 	if action != "start" && action != "stop" && action != "restart" {
@@ -967,9 +1057,17 @@ func (a *App) buildOLCRTC() error {
 }
 
 func (a *App) memoryTotals() (uint64, uint64, error) {
-	content, err := os.ReadFile(a.memoryInfoPath)
+	values, err := a.memoryValues()
 	if err != nil {
 		return 0, 0, err
+	}
+	return values["MemTotal"], values["SwapTotal"], nil
+}
+
+func (a *App) memoryValues() (map[string]uint64, error) {
+	content, err := os.ReadFile(a.memoryInfoPath)
+	if err != nil {
+		return nil, err
 	}
 	values := map[string]uint64{}
 	for _, line := range strings.Split(string(content), "\n") {
@@ -978,19 +1076,19 @@ func (a *App) memoryTotals() (uint64, uint64, error) {
 			continue
 		}
 		key := strings.TrimSuffix(fields[0], ":")
-		if key != "MemTotal" && key != "SwapTotal" {
+		if key != "MemTotal" && key != "MemAvailable" && key != "SwapTotal" && key != "SwapFree" {
 			continue
 		}
 		kilobytes, parseErr := strconv.ParseUint(fields[1], 10, 64)
 		if parseErr != nil {
-			return 0, 0, fmt.Errorf("прочитать %s: %w", key, parseErr)
+			return nil, fmt.Errorf("прочитать %s: %w", key, parseErr)
 		}
 		values[key] = kilobytes * 1024
 	}
 	if values["MemTotal"] == 0 {
-		return 0, 0, errors.New("в /proc/meminfo отсутствует MemTotal")
+		return nil, errors.New("в /proc/meminfo отсутствует MemTotal")
 	}
-	return values["MemTotal"], values["SwapTotal"], nil
+	return values, nil
 }
 
 func (a *App) ensureBuildMemory() error {

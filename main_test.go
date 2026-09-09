@@ -19,8 +19,16 @@ func testApp(t *testing.T) *App {
 	a.projectDir = filepath.Join(t.TempDir(), "olcrtc")
 	a.systemdDir = filepath.Join(t.TempDir(), "systemd")
 	a.memoryInfoPath = filepath.Join(t.TempDir(), "meminfo")
+	a.uptimePath = filepath.Join(t.TempDir(), "uptime")
+	a.loadavgPath = filepath.Join(t.TempDir(), "loadavg")
 	a.swapFile = filepath.Join(t.TempDir(), "swapfile")
-	if err := os.WriteFile(a.memoryInfoPath, []byte("MemTotal:       8388608 kB\nSwapTotal:            0 kB\n"), 0600); err != nil {
+	if err := os.WriteFile(a.memoryInfoPath, []byte("MemTotal:       8388608 kB\nMemAvailable:   6291456 kB\nSwapTotal:      4194304 kB\nSwapFree:       3145728 kB\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.uptimePath, []byte("93784.20 0.00\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(a.loadavgPath, []byte("0.12 0.34 0.56 1/100 123\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.saveCredentials("admin", "correct-horse-battery"); err != nil {
@@ -59,6 +67,47 @@ func TestAuthentication(t *testing.T) {
 		t.Fatalf("authenticated: %d", w.Code)
 	}
 }
+
+func TestDiagnosticsReturnsHostStatsAndServiceJournals(t *testing.T) {
+	a := testApp(t)
+	if w := request(a, http.MethodGet, "/api/diagnostics", "", nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated diagnostics: %d", w.Code)
+	}
+	var calls []string
+	a.runner = func(name string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
+		return []byte("Sep 09 12:00:00 service started\n"), nil
+	}
+	w := request(a, http.MethodGet, "/api/diagnostics", "", loginCookie(t, a))
+	if w.Code != http.StatusOK {
+		t.Fatalf("diagnostics: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Host struct {
+			UptimeSeconds   float64 `json:"uptimeSeconds"`
+			Load1           float64 `json:"load1"`
+			MemoryTotal     uint64  `json:"memoryTotal"`
+			MemoryAvailable uint64  `json:"memoryAvailable"`
+		} `json:"host"`
+		Services map[string]serviceJournal `json:"services"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Host.UptimeSeconds != 93784.2 || response.Host.Load1 != 0.12 || response.Host.MemoryAvailable == 0 || response.Host.MemoryTotal == 0 {
+		t.Fatalf("unexpected host diagnostics: %#v", response.Host)
+	}
+	if !strings.Contains(response.Services["olcrtc"].Log, "service started") || response.Services["webgui"].Unit != "olcrtcwebgui.service" {
+		t.Fatalf("unexpected journals: %#v", response.Services)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"journalctl -u olcrtc.service --no-pager -n 200 -o short-iso", "journalctl -u olcrtcwebgui.service --no-pager -n 200 -o short-iso"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing command %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func validSettings() Settings {
 	s := defaultSettings()
 	s.RoomID = "https://meet.example.org/rtc-room"
@@ -446,7 +495,7 @@ func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 	if root.Code != http.StatusOK || !strings.Contains(root.Body.String(), `id="panel" hidden`) {
 		t.Fatalf("root page: %d %s", root.Code, root.Body.String())
 	}
-	for _, want := range []string{`id="profileList"`, `id="profileSettingsDialog"`, `id="clientDialog"`, `id="shareLoading"`} {
+	for _, want := range []string{`id="profileList"`, `id="profileSettingsDialog"`, `id="clientDialog"`, `id="shareLoading"`, `id="openDiagnostics"`, `id="diagnosticsDialog"`} {
 		if !strings.Contains(root.Body.String(), want) {
 			t.Fatalf("profile dialog UI does not contain %q", want)
 		}
