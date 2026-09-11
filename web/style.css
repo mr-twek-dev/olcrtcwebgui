@@ -61,6 +61,13 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .profile-summary h3 { margin:0 0 5px; font:600 19px Georgia; }
 .profile-summary p { margin:0 0 4px; color:var(--green); font-size:13px; font-weight:700; }
 .profile-summary small { display:block; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.instance-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.instance-title-row h3 { flex:0 1 auto; }
+.instance-state { display:inline-flex; align-items:center; min-height:24px; padding:3px 9px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; }
+.instance-state.online { color:#0a795a; border-color:#79bea6; background:#e5f7ef; }
+.instance-state.failed { color:var(--danger); border-color:#efb4b4; background:#fff0f0; }
+.instance-config { margin-top:4px; opacity:.72; }
+.instance-empty { margin:0; padding:24px; border:1px dashed var(--line); text-align:center; }
 .profile-card-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:7px; }
 .profile-card-actions button.secondary { background:#e5eae4; color:var(--ink); }
 .profile-card-actions button.danger { background:#f8ebe9; color:var(--danger); }

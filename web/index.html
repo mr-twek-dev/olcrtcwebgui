@@ -26,7 +26,7 @@
       <div class="brand"><span class="logo">O</span><div><b>OLC RTC</b><small>CONTROL PANEL</small></div></div>
       <nav>
         <button class="active" data-scroll="overview">⌂ <span>Обзор</span></button>
-        <button data-scroll="settingsCard">⚙ <span>Профили</span></button>
+        <button data-scroll="settingsCard">◇ <span>Серверы</span></button>
         <button id="openDiagnostics">▤ <span>Диагностика</span></button>
       </nav>
       <div class="aside-bottom"><span class="avatar">A</span><div><b id="currentUser">admin</b><small>Администратор</small></div><button id="logout" title="Выйти">↪</button></div>
@@ -41,42 +41,42 @@
 
       <div class="grid">
         <article class="status-card">
-          <div class="card-head"><div><p class="eyebrow">СОСТОЯНИЕ СЕРВЕРА</p><h2 id="statusText">Проверяем...</h2></div><span class="pulse">●</span></div>
+          <div class="card-head"><div><p class="eyebrow">СОСТОЯНИЕ ЭКЗЕМПЛЯРОВ</p><h2 id="statusText">Проверяем...</h2></div><span class="pulse">●</span></div>
           <dl>
             <div><dt>Версия</dt><dd id="version">-</dd></div>
             <div><dt>Каталог</dt><dd id="projectDir">-</dd></div>
             <div><dt>ОЗУ</dt><dd id="memoryTotal">-</dd></div>
             <div><dt>SWAP</dt><dd id="swapTotal">-</dd></div>
-            <div class="wide"><dt>Конфигурация</dt><dd id="configPath">-</dd></div>
+            <div class="wide"><dt>Каталог конфигураций</dt><dd id="configPath">-</dd></div>
           </dl>
           <p id="memoryHint" class="hint" hidden>ОЗУ меньше 4 ГБ, SWAP отключён. Перед сборкой панель автоматически создаст и включит swap-файл размером 4 ГБ.</p>
-          <div class="actions"><button data-action="start">Запустить</button><button class="secondary" data-action="restart">Перезапустить</button><button class="danger" data-action="stop">Остановить</button></div>
+          <div class="actions"><button data-all-action="start">Запустить все</button><button class="secondary" data-all-action="restart">Перезапустить все</button><button class="danger" data-all-action="stop">Остановить все</button></div>
         </article>
         <article id="updateCard">
-          <p class="eyebrow">УСТАНОВКА И ОБНОВЕНИЯ</p><h2>OLC RTC готов к работе</h2><p class="muted">Панель скачает исходники, соберёт бинарник и установит systemd-сервис.</p>
+          <p class="eyebrow">УСТАНОВКА И ОБНОВЛЕНИЯ</p><h2>OLC RTC готов к работе</h2><p class="muted">Панель скачает исходники, соберёт общий бинарник и установит systemd-шаблон для всех серверов.</p>
           <div class="version-row"><span>Текущая <b id="currentVersion">-</b></span><span>Последняя <b id="latestVersion">-</b></span></div>
           <div class="actions"><button id="checkUpdate" class="secondary">Проверить</button><button id="installUpdate" disabled>Установить / обновить</button></div>
         </article>
       </div>
 
       <article id="settingsCard">
-        <div class="card-head"><div><p class="eyebrow">ПРОФИЛИ</p><h2>Конфигурации серверов</h2></div><button id="addProfile" class="primary" type="button">+ Новый профиль</button></div>
-        <p class="muted intro">Профили используются по порядку: при ошибке OLC RTC переключится на следующую конфигурацию.</p>
-        <div id="profileList" class="profile-list"></div>
+        <div class="card-head"><div><p class="eyebrow">ЭКЗЕМПЛЯРЫ</p><h2>Серверы OLC RTC</h2></div><button id="addInstance" class="primary" type="button">+ Новый сервер</button></div>
+        <p class="muted intro">Каждая карточка — отдельный процесс OLC RTC со своим YAML, systemd-сервисом, статусом и журналом.</p>
+        <div id="instanceList" class="profile-list"></div>
       </article>
 
       <dialog id="profileSettingsDialog" class="panel-dialog">
         <div class="dialog-shell">
-          <div class="dialog-head"><div><p class="eyebrow">КОНФИГУРАЦИЯ ПРОФИЛЯ</p><h2 id="settingsDialogTitle">Настройки</h2></div><button id="closeSettings" class="dialog-close" type="button" aria-label="Закрыть">×</button></div>
+          <div class="dialog-head"><div><p class="eyebrow">КОНФИГУРАЦИЯ СЕРВЕРА</p><h2 id="settingsDialogTitle">Настройки</h2></div><button id="closeSettings" class="dialog-close" type="button" aria-label="Закрыть">×</button></div>
           <form id="settingsForm" class="settings">
           <fieldset>
-            <legend>Профиль</legend>
-            <div class="fields"><label class="span-2">Название<input id="profileName" maxlength="64" placeholder="Например, jitsi-main" required></label></div>
+            <legend>Экземпляр</legend>
+            <div class="fields"><label class="span-2">Название сервера<input id="profileName" maxlength="64" placeholder="Например, Jitsi Frankfurt" required><small>Системный идентификатор и unit создаются панелью автоматически</small></label></div>
           </fieldset>
           <fieldset>
             <legend>Соединение</legend>
             <div class="fields">
-              <label>Режим<select id="mode"><option value="srv">Сервер (srv)</option><option value="cnc">Клиент (cnc)</option></select><small>Общий для всех профилей; режим gen пока не поддержан встроенными провайдерами</small></label>
+              <label>Режим<select id="mode"><option value="srv">Сервер (srv)</option><option value="cnc">Клиент (cnc)</option></select><small>Режим этого экземпляра; gen пока не поддержан встроенными провайдерами</small></label>
               <label>Провайдер<select id="provider"><option value="jitsi">Jitsi</option><option value="telemost">Яндекс Телемост</option><option value="wbstream">WB Stream</option><option value="none">Прямое подключение</option></select><small>Сервис сигналинга и получения credentials</small></label>
               <label>Транспорт<select id="transport"><option value="datachannel">Data channel</option><option value="vp8channel">VP8 channel</option><option value="seichannel">SEI channel</option><option value="videochannel">Video channel</option></select><small>Jitsi + datachannel - рекомендуемая комбинация</small></label>
               <label class="span-2">Комната<input id="roomId" placeholder="https://meet.example.org/myroom"><small>Для Jitsi - полный URL, для Telemost и WB Stream - ID комнаты</small></label>
@@ -165,8 +165,6 @@
           <fieldset>
             <legend>Общие параметры сервера</legend>
             <div class="fields">
-              <label>Задержка failover<input id="failoverRetryDelay" placeholder="2s"></label>
-              <label>Максимум циклов<input id="failoverMaxCycles" type="number" min="0"><small>0 — без ограничения</small></label>
               <label class="span-2">Каталог словарей<input id="dataDir" placeholder="Необязательно"><small>Каталог с файлами names и surnames; пусто - встроенные словари</small></label>
               <label class="toggle"><input id="debug" type="checkbox"><span></span>Подробные логи</label>
             </div>
@@ -207,7 +205,7 @@
             </section>
             <p id="diagnosticsWarning" class="hint" hidden></p>
             <div class="log-toolbar">
-              <div><button type="button" class="active" data-log-service="olcrtc">OLC RTC</button><button type="button" data-log-service="webgui">WebGUI</button></div>
+              <div id="logServiceTabs"></div>
               <button id="refreshDiagnostics" type="button" class="secondary">Обновить</button>
             </div>
             <div class="log-meta"><b id="logServiceName">—</b><code id="logUnit">—</code></div>
