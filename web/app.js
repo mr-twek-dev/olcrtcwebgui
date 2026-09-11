@@ -17,6 +17,7 @@ const set = (id, value) => { $(id).value = value ?? ''; };
 const formatGiB = bytes => bytes ? `${(bytes / (1024 ** 3)).toFixed(1)} ГБ` : '0 ГБ';
 
 let instances = [];
+let jitsiResources = [];
 let instancesFingerprint = '';
 let activeInstanceId = '';
 let pendingNewInstanceId = '';
@@ -29,7 +30,7 @@ async function boot() {
     $('#login').hidden = true;
     $('#panel').hidden = false;
     $('#currentUser').textContent = me.username;
-    await Promise.all([loadInstances(), loadStatus()]);
+    await Promise.all([loadInstances(), loadStatus(), loadJitsiResources()]);
   } catch {
     $('#login').hidden = false;
     $('#panel').hidden = true;
@@ -58,6 +59,24 @@ async function loadInstances() {
   }
 }
 function currentInstance() { return instances.find(instance => instance.id === activeInstanceId); }
+
+function matchingJitsiResource(roomUrl) {
+  return jitsiResources.find(resource => roomUrl === resource || roomUrl.startsWith(`${resource}/`)) || '';
+}
+function renderJitsiResourceOptions(roomUrl = text('#roomId')) {
+  const select = $('#jitsiResource');
+  const selected = matchingJitsiResource(roomUrl);
+  const options = jitsiResources.map(resource => {
+    const option = document.createElement('option'); option.value = resource; option.textContent = resource; return option;
+  });
+  const manual = document.createElement('option'); manual.value = '__manual__'; manual.textContent = 'Ввести URL вручную'; options.push(manual);
+  select.replaceChildren(...options); select.value = selected || '__manual__';
+}
+async function loadJitsiResources() {
+  const result = await api('/api/jitsi-resources');
+  jitsiResources = result.resources || [];
+  renderJitsiResourceOptions();
+}
 
 function fillSettings(s) {
   set('#mode', s.mode); set('#dataDir', s.dataDir); $('#debug').checked = Boolean(s.debug);
@@ -146,7 +165,7 @@ function openInstanceSettings(id, isNew = false) {
   const instance = instances.find(item => item.id === id); if (!instance) return;
   activeInstanceId = id; pendingNewInstanceId = isNew ? id : '';
   set('#profileName', instance.name); fillSettings(instance.settings); $('#settingsDialogTitle').textContent = instance.name;
-  refreshForm(); $('#profileSettingsDialog').showModal();
+  renderJitsiResourceOptions(instance.settings.roomId); refreshForm(); $('#profileSettingsDialog').showModal();
 }
 async function closeInstanceSettings() {
   const id = pendingNewInstanceId; pendingNewInstanceId = ''; $('#profileSettingsDialog').close();
@@ -170,6 +189,38 @@ $('#settingsForm').addEventListener('submit', async event => {
 $('#closeSettings').onclick = closeInstanceSettings;
 $('#cancelSettings').onclick = closeInstanceSettings;
 $('#profileSettingsDialog').addEventListener('cancel', event => { event.preventDefault(); closeInstanceSettings(); });
+
+async function generateJitsiRoom() {
+  const resource = text('#jitsiResource');
+  if (!resource || resource === '__manual__') return notify('Сначала выберите сохранённый Jitsi-ресурс.', true);
+  const button = $('#generateJitsiRoom'); button.disabled = true;
+  try {
+    const result = await api('/api/jitsi-room', {method: 'POST', body: JSON.stringify({resource})});
+    set('#roomId', result.roomUrl); notify('Новый адрес комнаты создан. Она откроется при первом подключении.');
+  } catch (error) { notify(error.message, true); }
+  finally { button.disabled = false; }
+}
+$('#jitsiResource').addEventListener('change', () => { if (text('#jitsiResource') !== '__manual__') generateJitsiRoom(); });
+$('#generateJitsiRoom').onclick = generateJitsiRoom;
+$('#roomId').addEventListener('input', () => {
+  if (!matchingJitsiResource(text('#roomId'))) $('#jitsiResource').value = '__manual__';
+});
+
+function closeJitsiResources() { $('#jitsiResourcesDialog').close(); }
+$('#manageJitsiResources').onclick = () => {
+  set('#jitsiResourcesInput', jitsiResources.join('\n')); $('#jitsiResourcesDialog').showModal();
+};
+$('#closeJitsiResources').onclick = closeJitsiResources;
+$('#cancelJitsiResources').onclick = closeJitsiResources;
+$('#jitsiResourcesDialog').addEventListener('cancel', event => { event.preventDefault(); closeJitsiResources(); });
+$('#jitsiResourcesForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const resources = $('#jitsiResourcesInput').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  try {
+    const result = await api('/api/jitsi-resources', {method: 'PUT', body: JSON.stringify({resources})});
+    jitsiResources = result.resources || []; renderJitsiResourceOptions(); closeJitsiResources(); notify('Список Jitsi-ресурсов сохранён.');
+  } catch (error) { notify(error.message, true); }
+});
 
 function uniqueInstanceName(base) { let candidate = base, suffix = 2; while (instances.some(instance => instance.name === candidate)) candidate = `${base} ${suffix++}`; return candidate; }
 $('#addInstance').onclick = async () => {
@@ -221,7 +272,7 @@ $('#copyClientUri').onclick = async () => {
 
 function refreshForm() {
   const mode = text('#mode'), provider = text('#provider'), transport = text('#transport');
-  $('#clientSocksGroup').hidden = mode !== 'cnc'; $('#serverSocksGroup').hidden = mode !== 'srv'; $('#engineGroup').hidden = provider !== 'none';
+  $('#clientSocksGroup').hidden = mode !== 'cnc'; $('#serverSocksGroup').hidden = mode !== 'srv'; $('#engineGroup').hidden = provider !== 'none'; $('#jitsiRoomTools').hidden = provider !== 'jitsi';
   document.querySelector('.provider-token').hidden = provider !== 'wbstream'; $('#vp8Group').hidden = transport !== 'vp8channel';
   $('#seiGroup').hidden = transport !== 'seichannel'; $('#videoGroup').hidden = transport !== 'videochannel';
   for (const option of $('#transport').options) option.disabled = provider === 'telemost' && (option.value === 'datachannel' || option.value === 'seichannel');
