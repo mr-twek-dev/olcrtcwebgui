@@ -39,6 +39,8 @@ header h1 em { color:var(--green); font-weight:400; }
 article { background:var(--card); border:1px solid #e5e5df; border-radius:14px; padding:26px; margin-bottom:18px; }
 article h2 { font:500 24px Georgia; margin:7px 0; }
 .card-head { display:flex; align-items:flex-start; justify-content:space-between; }
+.card-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.card-actions button { min-height:44px; padding:11px 16px; border:1px solid var(--line); border-radius:4px; font-weight:700; }
 .pulse { color:#53aa70; background:#e6f6e9; padding:6px 9px; border-radius:50%; }
 dl { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin:25px 0; }
 dl div { padding:16px 0; }
@@ -73,13 +75,15 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .profile-card-actions button.danger { background:#f8ebe9; color:var(--danger); }
 .profile-card-actions button.icon { width:40px; padding-inline:0; }
 .profile-card-actions button.text { padding-inline:11px; font-size:12px; }
-.panel-dialog { width:min(1080px,calc(100% - 30px)); max-height:92vh; padding:0; border:0; border-radius:16px; color:var(--ink); box-shadow:0 30px 100px #071c154d; }
+.panel-dialog { width:min(1080px,calc(100% - 30px)); max-height:92dvh; padding:0; overflow:hidden; border:0; border-radius:16px; color:var(--ink); box-shadow:0 30px 100px #071c154d; }
 .panel-dialog::backdrop { background:#071c1599; backdrop-filter:blur(3px); }
-.dialog-shell { max-height:92vh; overflow:auto; padding:26px 30px 30px; background:var(--card); }
+.dialog-shell { max-height:calc(92dvh - 2px); overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable; padding:26px 30px 30px; background:var(--card); }
+html:has(dialog[open]),body:has(dialog[open]) { overflow:hidden; }
 .dialog-head { position:sticky; z-index:2; top:-26px; display:flex; justify-content:space-between; align-items:flex-start; margin:-26px -30px 0; padding:26px 30px 18px; background:var(--card); border-bottom:1px solid var(--line); }
 .dialog-head h2 { margin:5px 0 0; font:500 27px Georgia; }
 .dialog-close { width:38px; height:38px; border:0; border-radius:50%; background:#edf0ec; color:var(--ink); font-size:24px; line-height:1; }
 .client-dialog { width:min(680px,calc(100% - 30px)); }
+.resource-dialog { width:min(700px,calc(100% - 30px)); }
 .client-connect label { margin-top:16px; }
 .diagnostics-dialog { width:min(1120px,calc(100% - 30px)); }
 .host-stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:22px 0; }
@@ -100,6 +104,10 @@ button:disabled { opacity:.45; cursor:not-allowed; }
 .fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 20px; }
 .settings small { font-weight:400; color:var(--muted); line-height:1.45; }
 .settings .span-2 { grid-column:span 2; }
+.settings .span-3 { grid-column:1/-1; }
+.jitsi-room-tools { display:grid; grid-template-columns:minmax(0,2fr) minmax(220px,1fr); gap:20px; align-items:end; }
+.jitsi-room-tools .inline-action { padding-bottom:0; }
+.jitsi-room-tools button { width:100%; }
 .settings .toggle { flex-direction:row; align-items:center; align-self:end; padding-bottom:15px; }
 .toggle input { width:18px; height:18px; }
 .inline-action { align-self:end; display:flex; gap:8px; padding-bottom:2px; }
@@ -141,6 +149,7 @@ footer span { color:var(--green); }
   .log-toolbar { align-items:stretch; flex-direction:column; }
   .log-toolbar div { display:grid; grid-template-columns:1fr 1fr; }
   .settings .span-2 { grid-column:auto; }
+  .jitsi-room-tools { grid-template-columns:1fr; gap:0; }
   .actions { flex-wrap:wrap; }
   .login-card { margin:4vh auto; padding:25px; }
 }
