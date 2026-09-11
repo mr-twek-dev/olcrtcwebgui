@@ -97,11 +97,15 @@ func TestDiagnosticsReturnsHostStatsAndServiceJournals(t *testing.T) {
 	if response.Host.UptimeSeconds != 93784.2 || response.Host.Load1 != 0.12 || response.Host.MemoryAvailable == 0 || response.Host.MemoryTotal == 0 {
 		t.Fatalf("unexpected host diagnostics: %#v", response.Host)
 	}
-	if !strings.Contains(response.Services["olcrtc"].Log, "service started") || response.Services["webgui"].Unit != "olcrtcwebgui.service" {
+	if response.Services["instance:main"].Unit != "olcrtc@main.service" || !strings.Contains(response.Services["webgui"].Log, "service started") {
 		t.Fatalf("unexpected journals: %#v", response.Services)
 	}
+	instanceLog := request(a, http.MethodGet, "/api/diagnostics?service=instance%3Amain", "", loginCookie(t, a))
+	if instanceLog.Code != http.StatusOK || !strings.Contains(instanceLog.Body.String(), "service started") {
+		t.Fatalf("instance journal: %d %s", instanceLog.Code, instanceLog.Body.String())
+	}
 	joined := strings.Join(calls, "\n")
-	for _, want := range []string{"journalctl -u olcrtc.service --no-pager -n 200 -o short-iso", "journalctl -u olcrtcwebgui.service --no-pager -n 200 -o short-iso"} {
+	for _, want := range []string{"journalctl -u olcrtc@main.service --no-pager -n 200 -o short-iso", "journalctl -u olcrtcwebgui.service --no-pager -n 200 -o short-iso"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing command %q in:\n%s", want, joined)
 		}
@@ -325,20 +329,20 @@ func TestInstallUpdateBuildsAndInstallsService(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(a.projectDir, "README.md")); err != nil {
 		t.Fatalf("checked out repository missing: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(a.projectDir, "olcrtc.yaml")); err != nil {
+	if _, err := os.Stat(a.instanceConfigFile("main")); err != nil {
 		t.Fatalf("generated settings missing: %v", err)
 	}
-	unit, err := os.ReadFile(filepath.Join(a.systemdDir, "olcrtc.service"))
+	unit, err := os.ReadFile(filepath.Join(a.systemdDir, "olcrtc@.service"))
 	if err != nil {
 		t.Fatalf("systemd unit missing: %v", err)
 	}
-	for _, want := range []string{"WorkingDirectory=" + filepath.Clean(a.projectDir), "ExecStart=" + filepath.Clean(a.binaryFile()) + " " + filepath.Clean(a.configFile()), "Restart=on-failure"} {
+	for _, want := range []string{"WorkingDirectory=" + filepath.Clean(a.projectDir), "ExecStart=" + filepath.Clean(a.binaryFile()) + " " + filepath.Clean(a.instanceConfigDir()) + "/%i.yaml", "Restart=on-failure"} {
 		if !strings.Contains(string(unit), want) {
 			t.Fatalf("unit does not contain %q:\n%s", want, unit)
 		}
 	}
 	joined := strings.Join(calls, "\n")
-	for _, want := range []string{"mage -d " + a.projectDir + " build", "systemd-analyze verify " + filepath.Join(a.systemdDir, "olcrtc.service"), "systemctl daemon-reload", "systemctl enable olcrtc.service"} {
+	for _, want := range []string{"mage -d " + a.projectDir + " build", "systemd-analyze verify " + filepath.Join(a.systemdDir, "olcrtc@.service"), "systemctl daemon-reload", "systemctl enable olcrtc@main.service"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("command %q not called:\n%s", want, joined)
 		}
@@ -498,7 +502,7 @@ func TestInitialPageHidesPanelAndServesAtRoot(t *testing.T) {
 	if !strings.Contains(root.Body.String(), "Доступ вне ограничений") || !strings.Contains(root.Body.String(), `href="/theme.css"`) {
 		t.Fatal("cyber interface title or theme is missing")
 	}
-	for _, want := range []string{`id="profileList"`, `id="profileSettingsDialog"`, `id="clientDialog"`, `id="shareLoading"`, `id="openDiagnostics"`, `id="diagnosticsDialog"`} {
+	for _, want := range []string{`id="instanceList"`, `id="profileSettingsDialog"`, `id="clientDialog"`, `id="shareLoading"`, `id="openDiagnostics"`, `id="diagnosticsDialog"`} {
 		if !strings.Contains(root.Body.String(), want) {
 			t.Fatalf("profile dialog UI does not contain %q", want)
 		}

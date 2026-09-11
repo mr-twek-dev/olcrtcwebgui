@@ -148,6 +148,7 @@ type App struct {
 	memoryInfoPath, uptimePath, loadavgPath, swapFile                            string
 	secureCookies                                                                bool
 	mu                                                                           sync.Mutex
+	instancesMu                                                                  sync.Mutex
 	sessions                                                                     map[string]session
 	attempts                                                                     map[string]attempt
 	updateMu                                                                     sync.Mutex
@@ -211,6 +212,12 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/settings", a.auth(a.settings))
 	mux.HandleFunc("PUT /api/settings", a.auth(a.saveSettings))
 	mux.HandleFunc("POST /api/share", a.auth(a.shareProfile))
+	mux.HandleFunc("GET /api/instances", a.auth(a.listInstances))
+	mux.HandleFunc("POST /api/instances", a.auth(a.createInstance))
+	mux.HandleFunc("PUT /api/instances/{id}", a.auth(a.updateInstance))
+	mux.HandleFunc("DELETE /api/instances/{id}", a.auth(a.deleteInstance))
+	mux.HandleFunc("POST /api/instances/{id}/share", a.auth(a.shareInstance))
+	mux.HandleFunc("POST /api/instances/{id}/service/{action}", a.auth(a.instanceServiceAction))
 	mux.HandleFunc("GET /api/status", a.auth(a.status))
 	mux.HandleFunc("GET /api/diagnostics", a.auth(a.diagnostics))
 	mux.HandleFunc("POST /api/service/{action}", a.auth(a.serviceAction))
@@ -367,24 +374,28 @@ func (a *App) shareProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Settings.Profiles = nil
-	if input.Settings.CryptoKey == "" && input.Settings.CryptoKeyFile != "" {
-		keyPath := input.Settings.CryptoKeyFile
+	a.shareSettings(w, input.Settings, input.Comment, a.configFile())
+}
+
+func (a *App) shareSettings(w http.ResponseWriter, settings Settings, comment, configFile string) {
+	if settings.CryptoKey == "" && settings.CryptoKeyFile != "" {
+		keyPath := settings.CryptoKeyFile
 		if !filepath.IsAbs(keyPath) {
-			keyPath = filepath.Join(filepath.Dir(a.configFile()), keyPath)
+			keyPath = filepath.Join(filepath.Dir(configFile), keyPath)
 		}
 		key, err := os.ReadFile(keyPath)
 		if err != nil {
 			apiError(w, http.StatusBadRequest, "Не удалось прочитать файл ключа: "+err.Error())
 			return
 		}
-		input.Settings.CryptoKey = strings.TrimSpace(string(key))
-		input.Settings.CryptoKeyFile = ""
+		settings.CryptoKey = strings.TrimSpace(string(key))
+		settings.CryptoKeyFile = ""
 	}
-	if err := validateSettings(input.Settings); err != nil {
+	if err := validateSettings(settings); err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	uri, err := clientURI(input.Settings, input.Comment)
+	uri, err := clientURI(settings, comment)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
@@ -661,6 +672,17 @@ func defaultSettings() Settings {
 		Failover: FailoverSettings{RetryDelay: "2s"},
 	}
 }
+
+func readyDefaultSettings() Settings {
+	s := defaultSettings()
+	s.RoomID = "https://meet.jit.si/olcrtc-" + strings.ToLower(random(6))
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic(err)
+	}
+	s.CryptoKey = hex.EncodeToString(key)
+	return s
+}
 func (a *App) loadSettings() (Settings, error) {
 	s := defaultSettings()
 	b, e := os.ReadFile(filepath.Join(a.dataDir, "settings.json"))
@@ -846,18 +868,30 @@ func (a *App) status(w http.ResponseWriter, r *http.Request) {
 	active := false
 	status := "не установлен"
 	installed := a.installationReady()
+	instances, instancesErr := a.loadInstances()
+	if instancesErr != nil {
+		apiError(w, 500, instancesErr.Error())
+		return
+	}
+	running := 0
 	if installed {
-		status = "остановлен"
-		serviceName, _ := normalizedServiceName(a.service)
-		if _, e := a.runner("systemctl", "is-active", "--quiet", serviceName); e == nil {
-			active = true
-			status = "работает"
+		for _, instance := range instances {
+			if instanceActive, _ := a.instanceState(instance.ID); instanceActive {
+				running++
+			}
+		}
+		active = running > 0
+		status = fmt.Sprintf("работает %d из %d", running, len(instances))
+		if len(instances) == 0 {
+			status = "нет экземпляров"
+		} else if running == 0 {
+			status = "все остановлены"
 		}
 	} else if strings.TrimSpace(string(local)) != "" {
 		status = "требуется сборка"
 	}
 	memoryTotal, swapTotal, _ := a.memoryTotals()
-	jsonOut(w, 200, map[string]any{"installed": installed, "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.configFile(), "repository": a.repository, "memoryTotal": memoryTotal, "swapTotal": swapTotal, "swapRecommended": memoryTotal > 0 && memoryTotal < minimumBuildMemory && swapTotal == 0})
+	jsonOut(w, 200, map[string]any{"installed": installed, "active": active, "status": status, "version": short(local), "projectDir": a.projectDir, "configPath": a.instanceConfigDir(), "repository": a.repository, "instanceCount": len(instances), "runningCount": running, "memoryTotal": memoryTotal, "swapTotal": swapTotal, "swapRecommended": memoryTotal > 0 && memoryTotal < minimumBuildMemory && swapTotal == 0})
 }
 
 func (a *App) diagnostics(w http.ResponseWriter, r *http.Request) {
@@ -874,6 +908,29 @@ func (a *App) diagnostics(w http.ResponseWriter, r *http.Request) {
 			errorsList = append(errorsList, item.label+": "+item.err.Error())
 		}
 	}
+	webUnit, _ := normalizedServiceName(a.webService)
+	services := map[string]serviceJournal{
+		"webgui": {Name: "WebGUI", Unit: webUnit},
+	}
+	if instances, err := a.loadInstances(); err == nil {
+		for _, instance := range instances {
+			unit, unitErr := a.instanceServiceName(instance.ID)
+			if unitErr != nil {
+				services["instance:"+instance.ID] = serviceJournal{Name: instance.Name, Unit: instance.ID, Error: unitErr.Error()}
+				continue
+			}
+			services["instance:"+instance.ID] = serviceJournal{Name: instance.Name, Unit: unit}
+		}
+	} else {
+		errorsList = append(errorsList, "экземпляры: "+err.Error())
+	}
+	selected := r.URL.Query().Get("service")
+	if selected == "" {
+		selected = "webgui"
+	}
+	if journal, ok := services[selected]; ok && journal.Error == "" {
+		services[selected] = a.readServiceJournal(journal.Name, journal.Unit)
+	}
 	jsonOut(w, http.StatusOK, map[string]any{
 		"generatedAt": time.Now().Format(time.RFC3339),
 		"host": map[string]any{
@@ -883,10 +940,7 @@ func (a *App) diagnostics(w http.ResponseWriter, r *http.Request) {
 			"swapTotal": memory["SwapTotal"], "swapFree": memory["SwapFree"],
 		},
 		"hostError": strings.Join(errorsList, "; "),
-		"services": map[string]serviceJournal{
-			"olcrtc": a.readServiceJournal("OLC RTC", a.service),
-			"webgui": a.readServiceJournal("WebGUI", a.webService),
-		},
+		"services":  services,
 	})
 }
 
@@ -951,15 +1005,24 @@ func (a *App) serviceAction(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusConflict, "Сервис не установлен. Нажмите «Установить / обновить»")
 		return
 	}
-	serviceName, err := normalizedServiceName(a.service)
+	instances, err := a.loadInstances()
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, err.Error())
+		apiError(w, 500, err.Error())
 		return
 	}
-	out, err := a.runner("systemctl", action, serviceName)
-	if err != nil {
-		apiError(w, 500, commandError(out, err))
-		return
+	for _, instance := range instances {
+		if action != "stop" {
+			if err := a.writeInstanceConfig(instance); err != nil {
+				apiError(w, 500, err.Error())
+				return
+			}
+		}
+		serviceName, _ := a.instanceServiceName(instance.ID)
+		out, runErr := a.runner("systemctl", action, serviceName)
+		if runErr != nil {
+			apiError(w, 500, fmt.Sprintf("%s: %s", instance.Name, commandError(out, runErr)))
+			return
+		}
 	}
 	jsonOut(w, 200, map[string]bool{"ok": true})
 }
@@ -1012,12 +1075,15 @@ func (a *App) installUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s, err := a.loadSettings(); err == nil {
-		if err := validateSettings(s); err == nil {
-			if err := a.writeSettings(s); err != nil {
-				apiError(w, 500, err.Error())
-				return
-			}
+	instances, err := a.loadInstances()
+	if err != nil {
+		apiError(w, 500, err.Error())
+		return
+	}
+	for _, instance := range instances {
+		if err := a.writeInstanceConfig(instance); err != nil {
+			apiError(w, 500, err.Error())
+			return
 		}
 	}
 	if err := a.buildOLCRTC(); err != nil {
@@ -1028,7 +1094,7 @@ func (a *App) installUpdate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 500, err.Error())
 		return
 	}
-	jsonOut(w, 200, map[string]any{"ok": true, "message": "OLC RTC обновлён, собран и установлен как systemd-сервис"})
+	jsonOut(w, 200, map[string]any{"ok": true, "message": fmt.Sprintf("OLC RTC обновлён; установлено экземпляров: %d", len(instances))})
 }
 
 func (a *App) buildOLCRTC() error {
@@ -1173,7 +1239,7 @@ func commandNotFound(err error) bool {
 }
 
 func (a *App) installService() error {
-	serviceName, err := normalizedServiceName(a.service)
+	serviceName, err := a.templateServiceName()
 	if err != nil {
 		return err
 	}
@@ -1185,29 +1251,29 @@ func (a *App) installService() error {
 	if err != nil {
 		return err
 	}
-	configFile, err := systemdAbsolutePath("OLCRTC_CONFIG", a.configFile())
+	configDir, err := systemdAbsolutePath("каталог конфигураций", a.instanceConfigDir())
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(a.systemdDir, 0755); err != nil {
 		return fmt.Errorf("создать каталог systemd: %w", err)
 	}
+	unitFile := filepath.Join(a.systemdDir, serviceName)
 	unit := fmt.Sprintf(`[Unit]
-Description=OLC RTC tunnel
+Description=OLC RTC tunnel instance %%i
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=%s
-ExecStart=%s %s
+ExecStart=%s %s/%%i.yaml
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-`, projectDir, binaryFile, configFile)
-	unitFile := filepath.Join(a.systemdDir, serviceName)
+`, projectDir, binaryFile, configDir)
 	if err := atomicWrite(unitFile, []byte(unit), 0644); err != nil {
 		return fmt.Errorf("установить systemd-сервис: %w", err)
 	}
@@ -1215,10 +1281,27 @@ WantedBy=multi-user.target
 	if err != nil && !commandNotFound(err) {
 		return fmt.Errorf("проверить systemd-сервис: %s", commandError(out, err))
 	}
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", serviceName}} {
-		out, err := a.runner("systemctl", args...)
+	legacyName, _ := normalizedServiceName(a.service)
+	legacyFile := filepath.Join(a.systemdDir, legacyName)
+	if _, statErr := os.Stat(legacyFile); statErr == nil && legacyFile != unitFile {
+		out, stopErr := a.runner("systemctl", "disable", "--now", legacyName)
+		if stopErr != nil {
+			return fmt.Errorf("остановить старый одиночный сервис %s: %s", legacyName, commandError(out, stopErr))
+		}
+	}
+	out, err = a.runner("systemctl", "daemon-reload")
+	if err != nil {
+		return fmt.Errorf("systemctl daemon-reload: %s", commandError(out, err))
+	}
+	instances, err := a.loadInstances()
+	if err != nil {
+		return err
+	}
+	for _, instance := range instances {
+		unit, _ := a.instanceServiceName(instance.ID)
+		out, err := a.runner("systemctl", "enable", unit)
 		if err != nil {
-			return fmt.Errorf("systemctl %s: %s", strings.Join(args, " "), commandError(out, err))
+			return fmt.Errorf("systemctl enable %s: %s", unit, commandError(out, err))
 		}
 	}
 	return nil
@@ -1263,7 +1346,7 @@ func olcrtcBinaryName(goos, goarch string) string {
 }
 
 func (a *App) serviceFile() string {
-	name, err := normalizedServiceName(a.service)
+	name, err := a.templateServiceName()
 	if err != nil {
 		return ""
 	}
