@@ -60,7 +60,7 @@
       </div>
 
       <article id="settingsCard">
-        <div class="card-head"><div><p class="eyebrow">ЭКЗЕМПЛЯРЫ</p><h2>Серверы OLC RTC</h2></div><button id="addInstance" class="primary" type="button">+ Новый сервер</button></div>
+        <div class="card-head"><div><p class="eyebrow">ЭКЗЕМПЛЯРЫ</p><h2>Серверы OLC RTC</h2></div><div class="card-actions"><button id="manageJitsiResources" class="secondary" type="button">Jitsi-ресурсы</button><button id="addInstance" class="primary" type="button">+ Новый сервер</button></div></div>
         <p class="muted intro">Каждая карточка — отдельный процесс OLC RTC со своим YAML, systemd-сервисом, статусом и журналом.</p>
         <div id="instanceList" class="profile-list"></div>
       </article>
@@ -79,7 +79,11 @@
               <label>Режим<select id="mode"><option value="srv">Сервер (srv)</option><option value="cnc">Клиент (cnc)</option></select><small>Режим этого экземпляра; gen пока не поддержан встроенными провайдерами</small></label>
               <label>Провайдер<select id="provider"><option value="jitsi">Jitsi</option><option value="telemost">Яндекс Телемост</option><option value="wbstream">WB Stream</option><option value="none">Прямое подключение</option></select><small>Сервис сигналинга и получения credentials</small></label>
               <label>Транспорт<select id="transport"><option value="datachannel">Data channel</option><option value="vp8channel">VP8 channel</option><option value="seichannel">SEI channel</option><option value="videochannel">Video channel</option></select><small>Jitsi + datachannel - рекомендуемая комбинация</small></label>
-              <label class="span-2">Комната<input id="roomId" placeholder="https://meet.example.org/myroom"><small>Для Jitsi - полный URL, для Telemost и WB Stream - ID комнаты</small></label>
+              <div id="jitsiRoomTools" class="jitsi-room-tools span-3">
+                <label>Jitsi-ресурс<select id="jitsiResource"></select><small>Выберите сохранённый сервер или ручной ввод</small></label>
+                <div class="inline-action"><button id="generateJitsiRoom" type="button" class="secondary">Создать новую комнату</button></div>
+              </div>
+              <label class="span-2">Комната<input id="roomId" placeholder="https://meet.example.org/myroom"><small>Для Jitsi - полный URL; его можно ввести вручную или создать выше</small></label>
               <label>Канал<input id="roomChannel" placeholder="Необязательно"><small>room.channel, если его требует engine</small></label>
               <label>DNS<input id="dns" placeholder="8.8.8.8:53" required><small>Адрес DNS в формате host:port</small></label>
               <label class="span-2 provider-token">Токен аккаунта<input id="providerToken" type="password" autocomplete="off"><small>auth.token для WB Stream; обязателен для datachannel и права canPublishData</small></label>
@@ -171,6 +175,17 @@
           </fieldset>
 
             <div class="save"><button type="button" id="cancelSettings" class="secondary">Отмена</button><button>Сохранить конфигурацию</button></div>
+          </form>
+        </div>
+      </dialog>
+
+      <dialog id="jitsiResourcesDialog" class="panel-dialog resource-dialog">
+        <div class="dialog-shell">
+          <div class="dialog-head"><div><p class="eyebrow">JITSI-РЕСУРСЫ</p><h2>Серверы для комнат</h2></div><button id="closeJitsiResources" class="dialog-close" type="button" aria-label="Закрыть">×</button></div>
+          <form id="jitsiResourcesForm" class="settings">
+            <p class="muted">По одному базовому адресу в строке. Комната создаётся на выбранном Jitsi при первом подключении OLC RTC.</p>
+            <label>Адреса Jitsi<textarea id="jitsiResourcesInput" rows="7" spellcheck="false" placeholder="https://meet.example.org" required></textarea><small>Можно указать домен без схемы — панель добавит HTTPS. Логины, query-параметры и фрагменты не допускаются.</small></label>
+            <div class="save"><button id="cancelJitsiResources" type="button" class="secondary">Отмена</button><button>Сохранить ресурсы</button></div>
           </form>
         </div>
       </dialog>

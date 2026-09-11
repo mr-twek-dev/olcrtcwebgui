@@ -149,6 +149,7 @@ type App struct {
 	secureCookies                                                                bool
 	mu                                                                           sync.Mutex
 	instancesMu                                                                  sync.Mutex
+	jitsiMu                                                                      sync.Mutex
 	sessions                                                                     map[string]session
 	attempts                                                                     map[string]attempt
 	updateMu                                                                     sync.Mutex
@@ -218,6 +219,9 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/instances/{id}", a.auth(a.deleteInstance))
 	mux.HandleFunc("POST /api/instances/{id}/share", a.auth(a.shareInstance))
 	mux.HandleFunc("POST /api/instances/{id}/service/{action}", a.auth(a.instanceServiceAction))
+	mux.HandleFunc("GET /api/jitsi-resources", a.auth(a.getJitsiResources))
+	mux.HandleFunc("PUT /api/jitsi-resources", a.auth(a.saveJitsiResources))
+	mux.HandleFunc("POST /api/jitsi-room", a.auth(a.createJitsiRoom))
 	mux.HandleFunc("GET /api/status", a.auth(a.status))
 	mux.HandleFunc("GET /api/diagnostics", a.auth(a.diagnostics))
 	mux.HandleFunc("POST /api/service/{action}", a.auth(a.serviceAction))
@@ -675,7 +679,7 @@ func defaultSettings() Settings {
 
 func readyDefaultSettings() Settings {
 	s := defaultSettings()
-	s.RoomID = "https://meet.jit.si/olcrtc-" + strings.ToLower(random(6))
+	s.RoomID = defaultJitsiResources[0] + "/" + newJitsiRoomName()
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		panic(err)
